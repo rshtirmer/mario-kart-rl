@@ -24,6 +24,13 @@ __pycache__/
 # OS
 .DS_Store
 
+# Backup reference
+mario-kart-desktop-backup/
+
+# Retro integration binary files
+retro_data/SuperMarioKart-Snes/rom.sfc
+retro_data/SuperMarioKart-Snes/*.state
+
 # Checkpoints and large files
 *.pt
 *.pth

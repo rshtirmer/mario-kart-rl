@@ -1,0 +1,18 @@
+[project]
+name = "autoresearch-mariokart"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "torch",
+    "gymnasium",
+    "stable-retro @ git+https://github.com/Farama-Foundation/stable-retro.git",
+    "numpy",
+    "Pillow",
+    "psutil",
+    "opencv-python-headless",
+    "aiohttp",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
