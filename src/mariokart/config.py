@@ -19,7 +19,8 @@ class Config:
     max_grad_norm: float = 0.5
 
     # Training
-    n_steps: int = 512
+    n_envs: int = 8
+    n_steps: int = 128  # per env, total = 128*8 = 1024 per rollout
     batch_size: int = 256
     n_epochs: int = 3
     training_minutes: int = 30

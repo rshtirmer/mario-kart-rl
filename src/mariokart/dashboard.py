@@ -54,10 +54,11 @@ body{background:#000;color:#fff;font-family:var(--sans);overflow-x:hidden;min-he
 
 canvas{width:100%;height:100px;display:block;margin-bottom:4px}
 
-.live-view{position:relative;width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden}
-.live-view img{max-width:100%;max-height:100%;image-rendering:pixelated;cursor:pointer}
-.live-view .live-badge{position:absolute;top:8px;left:8px;background:var(--red);color:#fff;font-size:9px;font-family:var(--mono);padding:2px 8px;border-radius:3px;animation:pulse 1.5s infinite;letter-spacing:1px}
-.live-view .live-info{position:absolute;bottom:0;left:0;right:0;padding:4px 10px;background:rgba(0,0,0,0.7);font-size:10px;font-family:var(--mono);color:#fff;display:flex;justify-content:space-between}
+.live-grid{display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:1fr 1fr;gap:2px;height:100%}
+.live-cell{position:relative;background:#000;overflow:hidden}
+.live-cell img{width:100%;height:100%;object-fit:contain;image-rendering:pixelated}
+.live-cell .env-id{position:absolute;top:2px;left:4px;font-size:8px;font-family:var(--mono);color:var(--cyan);opacity:0.7}
+.live-badge{position:absolute;top:8px;right:8px;background:var(--red);color:#fff;font-size:8px;font-family:var(--mono);padding:1px 6px;border-radius:2px;animation:pulse 1.5s infinite;letter-spacing:1px;z-index:1}
 
 /* Fullscreen overlay */
 .fullscreen-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:1000;align-items:center;justify-content:center;flex-direction:column}
@@ -114,16 +115,10 @@ tbody tr:hover{background:var(--bg3)}
     <div class="panel-title">Lap Times</div>
     <canvas id="c-lap"></canvas>
   </div>
-  <div class="panel" style="grid-row:1/3">
-    <div class="panel-title">Live View</div>
-    <div class="live-view" onclick="openFullscreen(0)">
-      <div class="live-badge">LIVE</div>
-      <img id="live-img" src="/api/latest_frame" alt="waiting...">
-      <div class="live-info">
-        <span id="live-step">--</span>
-        <span id="live-speed">--</span>
-      </div>
-    </div>
+  <div class="panel" style="grid-row:1/3;position:relative">
+    <div class="panel-title">Live Agents (8 envs)</div>
+    <div class="live-badge">LIVE</div>
+    <div class="live-grid" id="live-grid"></div>
   </div>
   <div class="panel">
     <div class="panel-title">Loss</div>
@@ -342,15 +337,25 @@ async function refresh() {
   }
 }
 
-// Live view state
+// Live grid state
 window._frameMeta = [];
 window._imgCache = {};
+const N_ENVS = 8;
 
-// Poll live frame at ~10 FPS for smooth real-time view
+// Build live grid cells
+const lgrid = document.getElementById('live-grid');
+lgrid.innerHTML = Array.from({length: N_ENVS}, (_, i) =>
+  `<div class="live-cell"><div class="env-id">#${i}</div><img id="lf-${i}" src="" alt=""></div>`
+).join('');
+
+// Poll all 8 live frames at ~5 FPS
 setInterval(() => {
-  const img = document.getElementById('live-img');
-  if (img) img.src = '/api/latest_frame?t=' + Date.now();
-}, 100);
+  const t = Date.now();
+  for (let i = 0; i < N_ENVS; i++) {
+    const img = document.getElementById('lf-' + i);
+    if (img) img.src = '/api/live/' + i + '?t=' + t;
+  }
+}, 200);
 
 // Fullscreen video viewer
 window._fsIdx = 0;
@@ -480,16 +485,17 @@ async def api_wr(request):
 
 
 async def api_latest_frame(request):
-    """Return the live frame (overwritten every step) from the latest run."""
-    runs = sorted(RUNS_DIR.glob("*/live_frame.png"), key=os.path.getmtime, reverse=True)
+    """Return the live frame from env 0."""
+    return await api_live_frame(request, env_id=0)
+
+
+async def api_live_frame(request, env_id=None):
+    """Return live frame for a specific env."""
+    if env_id is None:
+        env_id = int(request.match_info.get("env_id", 0))
+    runs = sorted(RUNS_DIR.glob(f"*/live_{env_id}.png"), key=os.path.getmtime, reverse=True)
     if runs:
         return web.FileResponse(runs[0], headers={"Cache-Control": "no-cache"})
-    # Fallback to latest saved frame
-    frame_dirs = sorted(RUNS_DIR.glob("*/frames"), key=os.path.getmtime, reverse=True)
-    if frame_dirs:
-        frames = sorted(frame_dirs[0].glob("*.png"))
-        if frames:
-            return web.FileResponse(frames[-1])
     return web.Response(status=404)
 
 
@@ -659,6 +665,7 @@ def main():
     app.router.add_get("/api/experiments", api_experiments)
     app.router.add_get("/api/wr", api_wr)
     app.router.add_get("/api/latest_frame", api_latest_frame)
+    app.router.add_get("/api/live/{env_id}", api_live_frame)
     app.router.add_get("/api/latest_frames", api_latest_frames)
     app.router.add_get("/api/frame/{run_id}/{filename}", api_frame)
 

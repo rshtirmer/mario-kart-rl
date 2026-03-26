@@ -1,4 +1,4 @@
-"""PPO training loop for Mario Kart RL with telemetry and evaluation."""
+"""PPO training with 8 parallel environments for Mario Kart RL."""
 
 import time
 import json
@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import psutil
 import torch
+import gymnasium
 
 from .config import Config
 from .env import MarioKartEnv
@@ -23,25 +24,38 @@ except ImportError:
 def get_device():
     if torch.backends.mps.is_available():
         try:
-            t = torch.zeros(1, device="mps")
-            _ = t + 1
+            torch.zeros(1, device="mps") + 1
             return torch.device("mps")
         except Exception:
             pass
     return torch.device("cpu")
 
 
-def compute_gae(rewards, values, dones, next_value, gamma, gae_lambda):
-    n_steps = len(rewards)
-    advantages = np.zeros(n_steps, dtype=np.float32)
-    last_gae = 0.0
+def compute_gae(rewards, values, dones, next_values, gamma, gae_lambda):
+    """Vectorized GAE for (n_steps, n_envs) shaped arrays."""
+    n_steps, n_envs = rewards.shape
+    advantages = np.zeros((n_steps, n_envs), dtype=np.float32)
+    last_gae = np.zeros(n_envs, dtype=np.float32)
+
     for t in reversed(range(n_steps)):
-        next_val = next_value if t == n_steps - 1 else values[t + 1]
-        next_non_terminal = 1.0 - dones[t]
-        delta = rewards[t] + gamma * next_val * next_non_terminal - values[t]
-        advantages[t] = last_gae = delta + gamma * gae_lambda * next_non_terminal * last_gae
+        if t == n_steps - 1:
+            next_val = next_values
+        else:
+            next_val = values[t + 1]
+        non_terminal = 1.0 - dones[t]
+        delta = rewards[t] + gamma * next_val * non_terminal - values[t]
+        last_gae = delta + gamma * gae_lambda * non_terminal * last_gae
+        advantages[t] = last_gae
+
     returns = advantages + values
     return advantages, returns
+
+
+def make_env(state, max_steps):
+    """Factory for AsyncVectorEnv."""
+    def _init():
+        return MarioKartEnv(state=state, max_episode_steps=max_steps)
+    return _init
 
 
 def train():
@@ -49,7 +63,6 @@ def train():
     device = get_device()
     print(f"Device: {device}")
 
-    # Project root is 3 levels up from this file: src/mariokart/train.py -> project root
     project_root = Path(__file__).resolve().parent.parent.parent
 
     try:
@@ -68,10 +81,16 @@ def train():
     if use_wandb:
         _wandb.init(project="mario-kart-rl", config=cfg.__dict__, name=exp_id)
 
-    env = MarioKartEnv(state=cfg.state, max_episode_steps=cfg.max_episode_steps)
-    obs_shape = env.observation_space.shape
-    n_actions = env.action_space.n
-    print(f"Obs shape: {obs_shape}, Actions: {n_actions}")
+    # 8 parallel environments
+    n_envs = cfg.n_envs
+    print(f"Creating {n_envs} parallel environments...")
+    envs = gymnasium.vector.AsyncVectorEnv(
+        [make_env(cfg.state, cfg.max_episode_steps) for _ in range(n_envs)]
+    )
+
+    obs_shape = envs.single_observation_space.shape  # (4, 52, 160)
+    n_actions = envs.single_action_space.n
+    print(f"Obs shape: {obs_shape}, Actions: {n_actions}, Envs: {n_envs}")
 
     agent = CNNPolicy(obs_shape, n_actions, hidden_dim=cfg.hidden_dim).to(device)
     n_params = sum(p.numel() for p in agent.parameters())
@@ -79,13 +98,13 @@ def train():
 
     optimizer = torch.optim.Adam(agent.parameters(), lr=cfg.lr, eps=1e-5)
 
-    # Rollout storage
-    obs_buf = np.zeros((cfg.n_steps,) + obs_shape, dtype=np.uint8)
-    act_buf = np.zeros(cfg.n_steps, dtype=np.int64)
-    rew_buf = np.zeros(cfg.n_steps, dtype=np.float32)
-    done_buf = np.zeros(cfg.n_steps, dtype=np.float32)
-    logp_buf = np.zeros(cfg.n_steps, dtype=np.float32)
-    val_buf = np.zeros(cfg.n_steps, dtype=np.float32)
+    # Rollout storage: (n_steps, n_envs, ...)
+    obs_buf = np.zeros((cfg.n_steps, n_envs) + obs_shape, dtype=np.uint8)
+    act_buf = np.zeros((cfg.n_steps, n_envs), dtype=np.int64)
+    rew_buf = np.zeros((cfg.n_steps, n_envs), dtype=np.float32)
+    done_buf = np.zeros((cfg.n_steps, n_envs), dtype=np.float32)
+    logp_buf = np.zeros((cfg.n_steps, n_envs), dtype=np.float32)
+    val_buf = np.zeros((cfg.n_steps, n_envs), dtype=np.float32)
 
     global_step = 0
     total_episodes = 0
@@ -97,8 +116,8 @@ def train():
     fps_counter_time = time.time()
     fps_counter_steps = 0
 
-    obs, info = env.reset()
-    print(f"Training for {cfg.training_minutes} minutes...")
+    obs, infos = envs.reset()
+    print(f"Training for {cfg.training_minutes} minutes with {n_envs} envs...")
     print("---")
 
     while True:
@@ -110,61 +129,61 @@ def train():
             obs_buf[step] = obs
 
             with torch.no_grad():
-                obs_tensor = torch.from_numpy(obs).unsqueeze(0).to(device)
-                action, log_prob, _, value = agent.get_action_and_value(obs_tensor)
+                obs_tensor = torch.from_numpy(obs).to(device)
+                actions, log_probs, _, values = agent.get_action_and_value(obs_tensor)
 
-            act_buf[step] = action.cpu().item()
-            logp_buf[step] = log_prob.cpu().item()
-            val_buf[step] = value.cpu().item()
+            act_np = actions.cpu().numpy()
+            act_buf[step] = act_np
+            logp_buf[step] = log_probs.cpu().numpy()
+            val_buf[step] = values.cpu().numpy()
 
-            obs, reward, terminated, truncated, info = env.step(act_buf[step])
-            rew_buf[step] = reward
-            done = terminated or truncated
-            done_buf[step] = float(done)
+            obs, rewards, terminateds, truncateds, infos = envs.step(act_np)
+            rew_buf[step] = rewards
+            dones = np.logical_or(terminateds, truncateds)
+            done_buf[step] = dones.astype(np.float32)
 
-            global_step += 1
-            fps_counter_steps += 1
+            global_step += n_envs
+            fps_counter_steps += n_envs
 
-            # Save B/W cropped frame (what agent sees) for dashboard
-            # Latest frame always written for live view
-            telem.save_live_frame(obs[0])  # first channel of frame stack
-            # Periodic save for history replay
-            if global_step % cfg.frame_interval == 0:
-                telem.save_frame(global_step, obs[0])
+            # Save live frames from each env (B/W cropped view)
+            for i in range(n_envs):
+                telem.save_live_frame(obs[i, 0], env_id=i)
 
-            if done:
-                total_episodes += 1
-                ep_reward = info.get("episode_reward", 0)
-                ep_length = info.get("episode_step", 0)
-                episode_rewards.append(ep_reward)
-                episode_lengths.append(ep_length)
+            # Periodic history save (from env 0)
+            if global_step % (cfg.frame_interval * n_envs) < n_envs:
+                telem.save_frame(global_step, obs[0, 0])
 
-                t = info.get("time_seconds", 0)
-                lap_num = info.get("lap_number", 0)
-                if lap_num > 0 and t > 0:
-                    avg_lap = t / lap_num
-                    lap_times.append(avg_lap)
-                    if avg_lap < best_lap_time:
-                        best_lap_time = avg_lap
+            # Track episode completions
+            for i in range(n_envs):
+                if dones[i]:
+                    total_episodes += 1
+                    ep_info = infos.get("final_info", [{}] * n_envs)
+                    if ep_info and i < len(ep_info) and ep_info[i] is not None:
+                        ep_rew = ep_info[i].get("episode_reward", 0)
+                        ep_len = ep_info[i].get("episode_step", 0)
+                    else:
+                        ep_rew = rewards[i]
+                        ep_len = 0
+                    episode_rewards.append(ep_rew)
+                    episode_lengths.append(ep_len)
 
-                obs, info = env.reset()
-
-        # GAE
+        # GAE (vectorized)
         with torch.no_grad():
-            obs_tensor = torch.from_numpy(obs).unsqueeze(0).to(device)
-            _, next_value = agent(obs_tensor)
-            next_value = next_value.cpu().item()
+            obs_tensor = torch.from_numpy(obs).to(device)
+            _, next_values = agent(obs_tensor)
+            next_values = next_values.cpu().numpy()
 
         advantages, returns = compute_gae(
-            rew_buf, val_buf, done_buf, next_value, cfg.gamma, cfg.gae_lambda
+            rew_buf, val_buf, done_buf, next_values, cfg.gamma, cfg.gae_lambda
         )
 
-        # PPO update
-        b_obs = torch.from_numpy(obs_buf).to(device)
-        b_act = torch.from_numpy(act_buf).long().to(device)
-        b_logp = torch.from_numpy(logp_buf).to(device)
-        b_adv = torch.from_numpy(advantages).to(device)
-        b_ret = torch.from_numpy(returns).to(device)
+        # Flatten (n_steps, n_envs) -> (n_steps * n_envs)
+        total_steps = cfg.n_steps * n_envs
+        b_obs = torch.from_numpy(obs_buf.reshape(total_steps, *obs_shape)).to(device)
+        b_act = torch.from_numpy(act_buf.reshape(total_steps)).long().to(device)
+        b_logp = torch.from_numpy(logp_buf.reshape(total_steps)).to(device)
+        b_adv = torch.from_numpy(advantages.reshape(total_steps)).to(device)
+        b_ret = torch.from_numpy(returns.reshape(total_steps)).to(device)
         b_adv = (b_adv - b_adv.mean()) / (b_adv.std() + 1e-8)
 
         total_policy_loss = 0.0
@@ -173,8 +192,8 @@ def train():
         n_updates = 0
 
         for epoch in range(cfg.n_epochs):
-            indices = np.random.permutation(cfg.n_steps)
-            for start in range(0, cfg.n_steps, cfg.batch_size):
+            indices = np.random.permutation(total_steps)
+            for start in range(0, total_steps, cfg.batch_size):
                 end = start + cfg.batch_size
                 mb_idx = indices[start:end]
 
@@ -204,32 +223,32 @@ def train():
                 n_updates += 1
 
         # Telemetry
-        if global_step % cfg.log_interval < cfg.n_steps:
-            now = time.time()
-            fps = fps_counter_steps / max(0.001, now - fps_counter_time)
-            fps_counter_time = now
-            fps_counter_steps = 0
-            process = psutil.Process()
-            mem_mb = process.memory_info().rss / 1024 / 1024
+        now = time.time()
+        fps = fps_counter_steps / max(0.001, now - fps_counter_time)
+        fps_counter_time = now
+        fps_counter_steps = 0
+        process = psutil.Process()
+        mem_mb = process.memory_info().rss / 1024 / 1024
 
-            metrics = {
-                "policy_loss": total_policy_loss / max(1, n_updates),
-                "value_loss": total_value_loss / max(1, n_updates),
-                "entropy": total_entropy / max(1, n_updates),
-                "fps": fps,
-                "total_episodes": total_episodes,
-                "peak_memory_mb": mem_mb,
-                "elapsed_seconds": elapsed,
-            }
-            if episode_rewards:
-                metrics["episode_reward"] = float(np.mean(episode_rewards[-10:]))
-                metrics["episode_length"] = float(np.mean(episode_lengths[-10:]))
-            if lap_times:
-                metrics["avg_lap_time"] = float(np.mean(lap_times[-10:]))
-                metrics["best_lap_time"] = best_lap_time
-            telem.log_step(global_step, metrics)
-            if use_wandb:
-                _wandb.log(metrics, step=global_step)
+        metrics = {
+            "policy_loss": total_policy_loss / max(1, n_updates),
+            "value_loss": total_value_loss / max(1, n_updates),
+            "entropy": total_entropy / max(1, n_updates),
+            "fps": fps,
+            "total_episodes": total_episodes,
+            "peak_memory_mb": mem_mb,
+            "elapsed_seconds": elapsed,
+            "n_envs": n_envs,
+        }
+        if episode_rewards:
+            metrics["episode_reward"] = float(np.mean(episode_rewards[-20:]))
+            metrics["episode_length"] = float(np.mean(episode_lengths[-20:]))
+        if lap_times:
+            metrics["avg_lap_time"] = float(np.mean(lap_times[-20:]))
+            metrics["best_lap_time"] = best_lap_time
+        telem.log_step(global_step, metrics)
+        if use_wandb:
+            _wandb.log(metrics, step=global_step)
 
     # Save checkpoint
     ckpt_path = run_dir / "checkpoints" / "final.pt"
@@ -240,17 +259,19 @@ def train():
         "config": cfg.__dict__,
     }, ckpt_path)
 
-    # Final evaluation
+    # Final evaluation (single env)
     print("Running final evaluation...")
-    eval_results = evaluate_agent(env, agent, device, cfg.eval_episodes)
+    eval_env = MarioKartEnv(state=cfg.state, max_episode_steps=cfg.max_episode_steps)
+    eval_results = evaluate_agent(eval_env, agent, device, cfg.eval_episodes)
+    eval_env.close()
+
     telem.close()
     if use_wandb:
         _wandb.finish()
-    env.close()
+    envs.close()
 
     elapsed_total = time.time() - start_time
-    process = psutil.Process()
-    peak_mem = process.memory_info().rss / 1024 / 1024
+    peak_mem = psutil.Process().memory_info().rss / 1024 / 1024
 
     print("---")
     print(f"avg_lap_time:      {eval_results['avg_lap_time']:.3f}")

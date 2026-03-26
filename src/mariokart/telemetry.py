@@ -30,13 +30,12 @@ class Telemetry:
         img = Image.fromarray(frame, mode="L")
         img.save(self.frames_dir / f"{step:010d}.png")
 
-    def save_live_frame(self, frame: np.ndarray):
-        """Overwrite the live frame file (dashboard polls this)."""
+    def save_live_frame(self, frame: np.ndarray, env_id: int = 0):
+        """Overwrite the live frame file for a specific env (dashboard polls these)."""
         from PIL import Image
         img = Image.fromarray(frame, mode="L")
-        # Write to temp then rename for atomic update
-        tmp = self.run_dir / "live_frame.tmp.png"
-        live = self.run_dir / "live_frame.png"
+        tmp = self.run_dir / f"live_{env_id}.tmp.png"
+        live = self.run_dir / f"live_{env_id}.png"
         img.save(tmp)
         tmp.rename(live)
 
