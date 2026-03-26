@@ -113,6 +113,12 @@ def train():
             global_step += 1
             fps_counter_steps += 1
 
+            # Save frame snapshots for dashboard
+            if global_step % 1000 == 0:
+                raw_frame = env.get_raw_frame()
+                if raw_frame is not None:
+                    telem.save_frame(global_step, raw_frame)
+
             if done:
                 total_episodes += 1
                 ep_reward = info.get("episode_reward", 0)
