@@ -54,10 +54,10 @@ body{background:#000;color:#fff;font-family:var(--sans);overflow-x:hidden;min-he
 
 canvas{width:100%;height:100px;display:block;margin-bottom:4px}
 
-.video-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;height:100%}
-.vcell{position:relative;background:#000;border:1px solid var(--border);overflow:hidden;cursor:pointer;aspect-ratio:256/224}
-.vcell canvas{width:100%;height:100%;image-rendering:pixelated}
-.vcell .vlabel{position:absolute;bottom:0;left:0;right:0;font-size:8px;font-family:var(--mono);color:#fff;background:rgba(0,0,0,0.7);padding:1px 4px;text-align:center}
+.live-view{position:relative;width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.live-view img{max-width:100%;max-height:100%;image-rendering:pixelated;cursor:pointer}
+.live-view .live-badge{position:absolute;top:8px;left:8px;background:var(--red);color:#fff;font-size:9px;font-family:var(--mono);padding:2px 8px;border-radius:3px;animation:pulse 1.5s infinite;letter-spacing:1px}
+.live-view .live-info{position:absolute;bottom:0;left:0;right:0;padding:4px 10px;background:rgba(0,0,0,0.7);font-size:10px;font-family:var(--mono);color:#fff;display:flex;justify-content:space-between}
 
 /* Fullscreen overlay */
 .fullscreen-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:1000;align-items:center;justify-content:center;flex-direction:column}
@@ -115,8 +115,15 @@ tbody tr:hover{background:var(--bg3)}
     <canvas id="c-lap"></canvas>
   </div>
   <div class="panel" style="grid-row:1/3">
-    <div class="panel-title">Training Replay Grid</div>
-    <div class="video-grid" id="vgrid"></div>
+    <div class="panel-title">Live View</div>
+    <div class="live-view" onclick="openFullscreen(0)">
+      <div class="live-badge">LIVE</div>
+      <img id="live-img" src="/api/latest_frame" alt="waiting...">
+      <div class="live-info">
+        <span id="live-step">--</span>
+        <span id="live-speed">--</span>
+      </div>
+    </div>
   </div>
   <div class="panel">
     <div class="panel-title">Loss</div>
@@ -296,17 +303,9 @@ async function refresh() {
     if (laps.length) drawChart('c-lap', laps, '#00ddff', {smooth: 3, target: 11.174});
     // FPS chart removed from layout
 
-    // Video grid - preload new frames into Image cache
+    // Live view + frame cache for fullscreen replay
     if (frames.length) {
       window._frameMeta = frames;
-      const grid = document.getElementById('vgrid');
-      const N = 9;
-      if (!grid.children.length) {
-        grid.innerHTML = Array.from({length: N}, (_, i) =>
-          `<div class="vcell" onclick="openFullscreen(${i})"><canvas id="vc-${i}" width="256" height="224"></canvas><div class="vlabel" id="vl-${i}">--</div></div>`
-        ).join('');
-      }
-      // Preload any new frame URLs
       for (const f of frames) {
         if (!window._imgCache[f.url]) {
           const img = new Image();
@@ -314,6 +313,11 @@ async function refresh() {
           window._imgCache[f.url] = img;
         }
       }
+      // Update live info
+      const latest = frames[frames.length - 1];
+      const step = latest.name.replace('.png', '').replace(/^0+/, '') || '0';
+      document.getElementById('live-step').textContent = 'step ' + step;
+      document.getElementById('live-speed').textContent = frames.length + ' frames';
     }
 
     // WR tracker
@@ -338,40 +342,15 @@ async function refresh() {
   }
 }
 
-// Video grid state
+// Live view state
 window._frameMeta = [];
 window._imgCache = {};
-window._gridIdxs = new Array(9).fill(0);
 
-// Animate grid at 10 FPS using preloaded images + canvas
+// Poll latest frame for live view (every 500ms = 2 FPS live update)
 setInterval(() => {
-  const frames = window._frameMeta;
-  if (!frames.length) return;
-  const N = 9;
-  const segLen = Math.max(1, Math.floor(frames.length / N));
-
-  for (let i = 0; i < N; i++) {
-    const start = Math.min(i * segLen, frames.length - 1);
-    const end = Math.min(start + segLen, frames.length);
-    window._gridIdxs[i] = (window._gridIdxs[i] + 1) % (end - start);
-    const fIdx = start + window._gridIdxs[i];
-    const f = frames[fIdx];
-    if (!f) continue;
-
-    const canvas = document.getElementById('vc-' + i);
-    const lbl = document.getElementById('vl-' + i);
-    const cachedImg = window._imgCache[f.url];
-
-    if (canvas && cachedImg && cachedImg.complete && cachedImg.naturalWidth) {
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(cachedImg, 0, 0, 256, 224);
-    }
-    if (lbl) {
-      const step = f.name.replace('.png', '').replace(/^0+/, '') || '0';
-      lbl.textContent = 'step ' + step;
-    }
-  }
-}, 100); // 10 FPS - smooth since images are preloaded
+  const img = document.getElementById('live-img');
+  if (img) img.src = '/api/latest_frame?t=' + Date.now();
+}, 500);
 
 // Fullscreen video viewer
 window._fsIdx = 0;
