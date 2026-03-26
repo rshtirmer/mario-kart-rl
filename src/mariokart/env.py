@@ -83,6 +83,7 @@ class MarioKartEnv(gym.Env):
         self._step_count = 0
         self._high_water = 0
         self._prev_lap = 0
+        self._prev_coins = 0
         self._wall_steps = 0
         self._total_reward = 0.0
         self._frames = deque(maxlen=FRAME_STACK)
@@ -133,32 +134,41 @@ class MarioKartEnv(gym.Env):
         progress = info["checkpoint"] + info["lap_number"] * lap_size
         reward = 0.0
         speed = info["speed"]
-        speed_ratio = max(0, speed) / TOP_SPEED
+        speed_ratio = min(1.0, max(0, speed) / TOP_SPEED)
 
-        # Checkpoint progress: scale by speed — faster = more reward
+        # Checkpoint progress: scaled by speed (lower magnitude for stability)
         delta = progress - self._high_water
         if delta > 0:
-            reward += delta * 10.0 * (1.0 + speed_ratio)
+            reward += delta * 5.0 * (0.5 + speed_ratio)
             self._high_water = progress
         elif delta < -100:
             self._high_water = progress
 
-        # Continuous speed bonus: proportional to speed
-        reward += 0.05 * speed_ratio
+        # Continuous speed bonus (primary signal for going fast)
+        reward += 0.1 * speed_ratio
 
         # Lap completion bonus
         new_lap = info["lap_number"]
         if new_lap > self._prev_lap and self._prev_lap >= 0:
-            reward += 100.0
+            reward += 50.0
         self._prev_lap = new_lap
 
-        # Soft wall penalty
-        if info["surface"] == SURFACE_WALL:
-            reward -= 0.5
+        # Surface penalties
+        surface = info["surface"]
+        if surface == SURFACE_WALL:
+            reward -= 0.3
+        elif surface == SURFACE_OFFROAD:
+            reward -= 0.2
 
-        # Wrong way penalty
+        # Wrong way penalty (strong)
         if info["wrong_way"] == 0x10:
-            reward -= 1.0
+            reward -= 2.0
+
+        # Coin collection bonus (coins boost top speed)
+        coins = info.get("coins", 0)
+        if coins > self._prev_coins:
+            reward += (coins - self._prev_coins) * 2.0
+        self._prev_coins = coins
 
         return reward
 
@@ -186,6 +196,7 @@ class MarioKartEnv(gym.Env):
         self._step_count = 0
         self._high_water = 0
         self._prev_lap = 0
+        self._prev_coins = 0
         self._wall_steps = 0
         self._total_reward = 0.0
         self._frames.clear()

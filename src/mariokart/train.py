@@ -31,6 +31,34 @@ def get_device():
     return torch.device("cpu")
 
 
+class RewardNormalizer:
+    """Running mean/std reward normalizer."""
+    def __init__(self, gamma=0.99):
+        self.ret = 0.0
+        self.mean = 0.0
+        self.var = 1.0
+        self.count = 1e-4
+        self.gamma = gamma
+
+    def normalize(self, rewards, dones):
+        """Normalize rewards using running return statistics."""
+        n_steps, n_envs = rewards.shape
+        normed = np.zeros_like(rewards)
+        for t in range(n_steps):
+            for e in range(n_envs):
+                if dones[t, e]:
+                    self.ret = 0.0
+                self.ret = rewards[t, e] + self.gamma * self.ret
+                # Welford's online algorithm
+                self.count += 1
+                delta = self.ret - self.mean
+                self.mean += delta / self.count
+                self.var += delta * (self.ret - self.mean)
+                std = max(np.sqrt(self.var / self.count), 1e-6)
+                normed[t, e] = rewards[t, e] / std
+        return normed
+
+
 def compute_gae(rewards, values, dones, next_values, gamma, gae_lambda):
     """Vectorized GAE for (n_steps, n_envs) shaped arrays."""
     n_steps, n_envs = rewards.shape
@@ -97,6 +125,7 @@ def train():
     print(f"Parameters: {n_params / 1e6:.2f}M")
 
     optimizer = torch.optim.Adam(agent.parameters(), lr=cfg.lr, eps=1e-5)
+    reward_normalizer = RewardNormalizer(gamma=cfg.gamma)
 
     # Rollout storage: (n_steps, n_envs, ...)
     obs_buf = np.zeros((cfg.n_steps, n_envs) + obs_shape, dtype=np.uint8)
@@ -176,8 +205,10 @@ def train():
             _, next_values = agent(obs_tensor)
             next_values = next_values.cpu().numpy()
 
+        # Normalize rewards before GAE
+        normed_rewards = reward_normalizer.normalize(rew_buf, done_buf)
         advantages, returns = compute_gae(
-            rew_buf, val_buf, done_buf, next_values, cfg.gamma, cfg.gae_lambda
+            normed_rewards, val_buf, done_buf, next_values, cfg.gamma, cfg.gae_lambda
         )
 
         # Flatten (n_steps, n_envs) -> (n_steps * n_envs)
@@ -187,7 +218,6 @@ def train():
         b_logp = torch.from_numpy(logp_buf.reshape(total_steps)).to(device)
         b_adv = torch.from_numpy(advantages.reshape(total_steps)).to(device)
         b_ret = torch.from_numpy(returns.reshape(total_steps)).to(device)
-        b_adv = (b_adv - b_adv.mean()) / (b_adv.std() + 1e-8)
 
         total_policy_loss = 0.0
         total_value_loss = 0.0
@@ -200,13 +230,17 @@ def train():
                 end = start + cfg.batch_size
                 mb_idx = indices[start:end]
 
+                # Per-minibatch advantage normalization (best practice)
+                mb_adv = b_adv[mb_idx]
+                mb_adv = (mb_adv - mb_adv.mean()) / (mb_adv.std() + 1e-8)
+
                 _, new_logp, entropy, new_value = agent.get_action_and_value(
                     b_obs[mb_idx], b_act[mb_idx]
                 )
 
                 ratio = torch.exp(new_logp - b_logp[mb_idx])
-                pg_loss1 = -b_adv[mb_idx] * ratio
-                pg_loss2 = -b_adv[mb_idx] * torch.clamp(
+                pg_loss1 = -mb_adv * ratio
+                pg_loss2 = -mb_adv * torch.clamp(
                     ratio, 1.0 - cfg.clip_epsilon, 1.0 + cfg.clip_epsilon
                 )
                 policy_loss = torch.max(pg_loss1, pg_loss2).mean()
