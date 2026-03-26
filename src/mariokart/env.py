@@ -167,9 +167,11 @@ class MarioKartEnv(gym.Env):
             return True
         if info["lap"] >= 133:
             return True
-        if self._step_count > 50 and info["speed"] < 100:
+        # Stuck detection: 150 consecutive steps (~10s) with no speed
+        # Relaxed to give agent time to recover from walls
+        if self._step_count > 100 and info["speed"] < 50:
             self._wall_steps += 1
-            if self._wall_steps > 50:
+            if self._wall_steps > 150:
                 return True
         else:
             self._wall_steps = 0
