@@ -54,7 +54,7 @@ body{background:#000;color:#fff;font-family:var(--sans);overflow-x:hidden;min-he
 
 canvas{width:100%;height:100px;display:block;margin-bottom:4px}
 
-.live-grid{display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:1fr 1fr;gap:2px;height:100%}
+.live-grid{display:grid;grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(4,1fr);gap:2px;height:100%}
 .live-cell{position:relative;background:#000;overflow:hidden}
 .live-cell img{width:100%;height:100%;object-fit:contain;image-rendering:pixelated}
 .live-cell .env-id{position:absolute;top:2px;left:4px;font-size:8px;font-family:var(--mono);color:var(--cyan);opacity:0.7}

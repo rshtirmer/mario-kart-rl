@@ -153,17 +153,17 @@ def train():
             if global_step % (cfg.frame_interval * n_envs) < n_envs:
                 telem.save_frame(global_step, obs[0, 0])
 
-            # Track episode completions (terminal info in _-prefixed keys)
+            # Track episode completions
             for i in range(n_envs):
                 if dones[i]:
                     total_episodes += 1
-                    ep_rew = infos.get("_episode_reward", rewards)[i]
-                    ep_len = infos.get("_episode_step", np.zeros(n_envs))[i]
-                    episode_rewards.append(float(ep_rew))
-                    episode_lengths.append(float(ep_len))
+                    ep_rew = float(infos.get("episode_reward", rewards)[i])
+                    ep_len = float(infos.get("episode_step", np.zeros(n_envs))[i])
+                    episode_rewards.append(ep_rew)
+                    episode_lengths.append(ep_len)
 
-                    t = infos.get("_time_seconds", np.zeros(n_envs))[i]
-                    lap_num = infos.get("_lap_number", np.zeros(n_envs))[i]
+                    t = float(infos.get("time_seconds", np.zeros(n_envs))[i])
+                    lap_num = float(infos.get("lap_number", np.zeros(n_envs))[i])
                     if lap_num > 0 and t > 0:
                         avg_lap = t / lap_num
                         lap_times.append(avg_lap)
