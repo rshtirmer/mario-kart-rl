@@ -82,6 +82,7 @@ class MarioKartEnv(gym.Env):
         self._action_lut = None
         self._step_count = 0
         self._high_water = 0
+        self._prev_lap = 0
         self._wall_steps = 0
         self._total_reward = 0.0
         self._frames = deque(maxlen=FRAME_STACK)
@@ -131,24 +132,33 @@ class MarioKartEnv(gym.Env):
         lap_size = max(info["lap_size"], 1)
         progress = info["checkpoint"] + info["lap_number"] * lap_size
         reward = 0.0
+        speed = info["speed"]
+        speed_ratio = max(0, speed) / TOP_SPEED
 
+        # Checkpoint progress: scale by speed — faster = more reward
         delta = progress - self._high_water
         if delta > 0:
-            reward += delta * 10.0
+            reward += delta * 10.0 * (1.0 + speed_ratio)
             self._high_water = progress
         elif delta < -100:
             self._high_water = progress
 
-        speed = info["speed"]
-        if speed > TOP_SPEED * 0.8:
-            reward += 0.2
-        elif speed > TOP_SPEED * 0.5:
-            reward += 0.1
+        # Continuous speed bonus: proportional to speed
+        reward += 0.05 * speed_ratio
 
+        # Lap completion bonus
+        new_lap = info["lap_number"]
+        if new_lap > self._prev_lap and self._prev_lap >= 0:
+            reward += 100.0
+        self._prev_lap = new_lap
+
+        # Soft wall penalty
         if info["surface"] == SURFACE_WALL:
-            reward -= 1.0
-        if info["wrong_way"] == 0x10:
             reward -= 0.5
+
+        # Wrong way penalty
+        if info["wrong_way"] == 0x10:
+            reward -= 1.0
 
         return reward
 
@@ -173,6 +183,7 @@ class MarioKartEnv(gym.Env):
 
         self._step_count = 0
         self._high_water = 0
+        self._prev_lap = 0
         self._wall_steps = 0
         self._total_reward = 0.0
         self._frames.clear()
