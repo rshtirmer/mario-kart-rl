@@ -14,7 +14,7 @@ class Config:
     gamma: float = 0.995
     gae_lambda: float = 0.95
     clip_epsilon: float = 0.2
-    entropy_coeff: float = 0.03
+    entropy_coeff: float = 0.05
     value_coeff: float = 0.5
     max_grad_norm: float = 0.5
 
@@ -23,7 +23,7 @@ class Config:
     n_steps: int = 128  # per env, total = 128*8 = 1024 per rollout
     batch_size: int = 256
     n_epochs: int = 3
-    training_minutes: int = 45
+    training_minutes: int = 30
 
     # Network
     hidden_dim: int = 256
