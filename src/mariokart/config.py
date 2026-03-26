@@ -23,7 +23,7 @@ class Config:
     n_steps: int = 128  # per env, total = 128*8 = 1024 per rollout
     batch_size: int = 256
     n_epochs: int = 3
-    training_minutes: int = 30
+    training_minutes: int = 45
 
     # Network
     hidden_dim: int = 256
