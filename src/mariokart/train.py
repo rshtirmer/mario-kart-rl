@@ -153,19 +153,22 @@ def train():
             if global_step % (cfg.frame_interval * n_envs) < n_envs:
                 telem.save_frame(global_step, obs[0, 0])
 
-            # Track episode completions
+            # Track episode completions (terminal info in _-prefixed keys)
             for i in range(n_envs):
                 if dones[i]:
                     total_episodes += 1
-                    ep_info = infos.get("final_info", [{}] * n_envs)
-                    if ep_info and i < len(ep_info) and ep_info[i] is not None:
-                        ep_rew = ep_info[i].get("episode_reward", 0)
-                        ep_len = ep_info[i].get("episode_step", 0)
-                    else:
-                        ep_rew = rewards[i]
-                        ep_len = 0
-                    episode_rewards.append(ep_rew)
-                    episode_lengths.append(ep_len)
+                    ep_rew = infos.get("_episode_reward", rewards)[i]
+                    ep_len = infos.get("_episode_step", np.zeros(n_envs))[i]
+                    episode_rewards.append(float(ep_rew))
+                    episode_lengths.append(float(ep_len))
+
+                    t = infos.get("_time_seconds", np.zeros(n_envs))[i]
+                    lap_num = infos.get("_lap_number", np.zeros(n_envs))[i]
+                    if lap_num > 0 and t > 0:
+                        avg_lap = t / lap_num
+                        lap_times.append(avg_lap)
+                        if avg_lap < best_lap_time:
+                            best_lap_time = avg_lap
 
         # GAE (vectorized)
         with torch.no_grad():
