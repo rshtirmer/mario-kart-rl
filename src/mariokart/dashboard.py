@@ -54,17 +54,10 @@ body{background:#000;color:#fff;font-family:var(--sans);overflow-x:hidden;min-he
 
 canvas{width:100%;height:100px;display:block;margin-bottom:4px}
 
-.video-player{position:relative;width:100%;aspect-ratio:256/224;background:#000;border:1px solid var(--border);overflow:hidden;margin-bottom:8px}
-.video-player img{width:100%;height:100%;object-fit:contain;image-rendering:pixelated}
-.video-player .overlay{position:absolute;bottom:0;left:0;right:0;padding:4px 8px;background:linear-gradient(transparent,rgba(0,0,0,0.85));display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px}
-.video-player .overlay .step-info{flex:1;color:#fff;opacity:0.7}
-.video-player .overlay .speed-btn{background:none;border:1px solid rgba(255,255,255,0.2);color:#fff;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:9px;font-family:var(--mono)}
-.video-player .overlay .speed-btn.active{border-color:var(--cyan);color:var(--cyan)}
-.timeline{width:100%;height:3px;background:#111;border-radius:2px;cursor:pointer;position:relative}
-.timeline .progress{height:100%;background:var(--cyan);border-radius:2px;box-shadow:var(--glow-c);transition:width 0.1s}
-.frame-thumbs{display:grid;grid-template-columns:repeat(6,1fr);gap:2px;margin-top:6px}
-.frame-thumbs img{width:100%;aspect-ratio:256/224;object-fit:cover;image-rendering:pixelated;border:1px solid transparent;cursor:pointer;opacity:0.5;transition:opacity 0.15s}
-.frame-thumbs img.active{border-color:var(--cyan);opacity:1}
+.video-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;height:100%}
+.vcell{position:relative;background:#000;border:1px solid var(--border);overflow:hidden;cursor:pointer;aspect-ratio:256/224}
+.vcell img{width:100%;height:100%;object-fit:cover;image-rendering:pixelated}
+.vcell .vlabel{position:absolute;bottom:0;left:0;right:0;font-size:8px;font-family:var(--mono);color:#fff;background:rgba(0,0,0,0.7);padding:1px 4px;text-align:center}
 
 /* Fullscreen overlay */
 .fullscreen-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:1000;align-items:center;justify-content:center;flex-direction:column}
@@ -122,18 +115,8 @@ tbody tr:hover{background:var(--bg3)}
     <canvas id="c-lap"></canvas>
   </div>
   <div class="panel" style="grid-row:1/3">
-    <div class="panel-title">Live View</div>
-    <div class="video-player">
-      <img id="vp-img" src="" alt="" onclick="openFullscreen()" style="cursor:pointer" title="Click for fullscreen">
-      <div class="overlay">
-        <span class="step-info" id="vp-step">--</span>
-        <button class="speed-btn" onclick="setSpeed(1)">1x</button>
-        <button class="speed-btn active" onclick="setSpeed(3)">3x</button>
-        <button class="speed-btn" onclick="setSpeed(8)">8x</button>
-      </div>
-    </div>
-    <div class="timeline" onclick="seekFrame(event)"><div class="progress" id="vp-progress"></div></div>
-    <div class="frame-thumbs" id="vp-thumbs"></div>
+    <div class="panel-title">Training Replay Grid</div>
+    <div class="video-grid" id="vgrid"></div>
   </div>
   <div class="panel">
     <div class="panel-title">Loss</div>
@@ -313,20 +296,16 @@ async function refresh() {
     if (laps.length) drawChart('c-lap', laps, '#00ddff', {smooth: 3, target: 11.174});
     // FPS chart removed from layout
 
-    // Video player - update frame list
-    if (frames.length && frames.length !== window._frameCount) {
+    // Video grid - split frames across 9 cells, each plays its segment
+    if (frames.length) {
       window._frames = frames;
-      window._frameCount = frames.length;
-      // Update thumbnails
-      const thumbs = document.getElementById('vp-thumbs');
-      const shown = frames.slice(-6);
-      thumbs.innerHTML = shown.map((f, i) =>
-        `<img src="${f.url}" onclick="jumpFrame(${frames.length - 6 + i})" data-idx="${frames.length - 6 + i}">`
-      ).join('');
-      // If at end, jump to latest
-      if (window._vpIdx >= frames.length - 2 || !window._vpStarted) {
-        window._vpIdx = frames.length - 1;
-        window._vpStarted = true;
+      const grid = document.getElementById('vgrid');
+      const N = 9;
+      // Build cells if needed
+      if (!grid.children.length) {
+        grid.innerHTML = Array.from({length: N}, (_, i) =>
+          `<div class="vcell" onclick="openFullscreen(${i})"><img id="vc-${i}" src=""><div class="vlabel" id="vl-${i}">--</div></div>`
+        ).join('');
       }
     }
 
@@ -352,73 +331,45 @@ async function refresh() {
   }
 }
 
-// Video player state
+// Video grid state
 window._frames = [];
-window._frameCount = 0;
-window._vpIdx = 0;
-window._vpSpeed = 3; // frames per second
-window._vpStarted = false;
+window._gridIdxs = new Array(9).fill(0); // each cell's current frame index
 
-function setSpeed(fps) {
-  window._vpSpeed = fps;
-  document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
-}
-
-function jumpFrame(idx) {
-  if (window._frames.length) {
-    window._vpIdx = Math.max(0, Math.min(idx, window._frames.length - 1));
-    renderFrame();
-  }
-}
-
-function seekFrame(e) {
-  const rect = e.currentTarget.getBoundingClientRect();
-  const pct = (e.clientX - rect.left) / rect.width;
-  jumpFrame(Math.floor(pct * window._frames.length));
-}
-
-function renderFrame() {
+// Animate grid - each cell plays a different segment of training at staggered offsets
+setInterval(() => {
   const frames = window._frames;
   if (!frames.length) return;
-  const idx = window._vpIdx;
-  const f = frames[idx];
-  const img = document.getElementById('vp-img');
-  const ts = Date.now();
-  img.src = f.url + '?t=' + ts;
-  const step = f.name.replace('.png', '').replace(/^0+/, '') || '0';
-  document.getElementById('vp-step').textContent = `Step ${step} (${idx + 1}/${frames.length})`;
-  document.getElementById('vp-progress').style.width = ((idx + 1) / frames.length * 100) + '%';
-  // Highlight active thumb
-  document.querySelectorAll('.frame-thumbs img').forEach(t => {
-    t.classList.toggle('active', parseInt(t.dataset.idx) === idx);
-  });
-}
+  const N = 9;
+  const segLen = Math.max(1, Math.floor(frames.length / N));
 
-// Auto-advance video
-setInterval(() => {
-  if (window._frames.length > 1) {
-    window._vpIdx = (window._vpIdx + 1) % window._frames.length;
-    renderFrame();
-  }
-}, 1000 / 3); // base rate, adjusted by speed
-
-// Dynamic speed interval
-let _vpTimer = null;
-function startVideoLoop() {
-  if (_vpTimer) clearInterval(_vpTimer);
-  _vpTimer = setInterval(() => {
-    if (window._frames.length > 1) {
-      window._vpIdx = (window._vpIdx + 1) % window._frames.length;
-      renderFrame();
+  for (let i = 0; i < N; i++) {
+    const start = Math.min(i * segLen, frames.length - 1);
+    const end = Math.min(start + segLen, frames.length);
+    window._gridIdxs[i] = (window._gridIdxs[i] + 1) % (end - start);
+    const fIdx = start + window._gridIdxs[i];
+    const f = frames[fIdx];
+    if (!f) continue;
+    const img = document.getElementById('vc-' + i);
+    const lbl = document.getElementById('vl-' + i);
+    if (img) img.src = f.url;
+    if (lbl) {
+      const step = f.name.replace('.png', '').replace(/^0+/, '') || '0';
+      lbl.textContent = 'step ' + step;
     }
-  }, 1000 / window._vpSpeed);
-}
-startVideoLoop();
-setInterval(() => { startVideoLoop(); }, 2000); // re-check speed
+  }
+}, 200); // 5 FPS per cell
 
 // Fullscreen video viewer
-function openFullscreen() {
+window._fsIdx = 0;
+window._fsCellIdx = 0;
+
+function openFullscreen(cellIdx) {
+  window._fsCellIdx = cellIdx || 0;
+  const frames = window._frames;
+  if (!frames.length) return;
+  const N = 9;
+  const segLen = Math.max(1, Math.floor(frames.length / N));
+  window._fsIdx = Math.min(window._fsCellIdx * segLen, frames.length - 1);
   document.getElementById('fs-overlay').classList.add('show');
   renderFullscreen();
 }
@@ -428,19 +379,25 @@ function closeFullscreen() {
 }
 
 function fsNav(dir) {
-  window._vpIdx = Math.max(0, Math.min(window._vpIdx + dir, window._frames.length - 1));
-  renderFrame();
+  window._fsIdx = Math.max(0, Math.min(window._fsIdx + dir, window._frames.length - 1));
   renderFullscreen();
 }
 
 function renderFullscreen() {
   const frames = window._frames;
   if (!frames.length) return;
-  const f = frames[window._vpIdx];
+  const f = frames[window._fsIdx];
   document.getElementById('fs-img').src = f.url + '?t=' + Date.now();
   const step = f.name.replace('.png', '').replace(/^0+/, '') || '0';
-  document.getElementById('fs-step').textContent = `Step ${step} (${window._vpIdx + 1}/${frames.length})`;
+  document.getElementById('fs-step').textContent = `Step ${step} (${window._fsIdx + 1}/${frames.length})`;
 }
+
+// Auto-advance fullscreen
+setInterval(() => {
+  if (document.getElementById('fs-overlay').classList.contains('show')) {
+    fsNav(1);
+  }
+}, 200);
 
 // Keyboard navigation
 document.addEventListener('keydown', e => {
@@ -543,7 +500,7 @@ async def api_latest_frames(request):
     if runs:
         run_id = runs[0].parent.name
         frames = sorted(runs[0].glob("*.png"))
-        for f in frames[-16:]:
+        for f in frames[-180:]:
             result.append({"url": f"/api/frame/{run_id}/{f.name}", "name": f.name, "run_id": run_id})
     return web.json_response(result)
 

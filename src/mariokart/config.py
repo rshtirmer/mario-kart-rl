@@ -32,7 +32,7 @@ class Config:
 
     # Telemetry
     log_interval: int = 100
-    frame_interval: int = 1000
+    frame_interval: int = 25  # ~1.7s between frames at 118 FPS for smooth video
 
     # Weights & Biases
     use_wandb: bool = True
