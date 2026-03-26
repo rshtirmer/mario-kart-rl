@@ -56,7 +56,7 @@ canvas{width:100%;height:100px;display:block;margin-bottom:4px}
 
 .video-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;height:100%}
 .vcell{position:relative;background:#000;border:1px solid var(--border);overflow:hidden;cursor:pointer;aspect-ratio:256/224}
-.vcell img{width:100%;height:100%;object-fit:cover;image-rendering:pixelated}
+.vcell canvas{width:100%;height:100%;image-rendering:pixelated}
 .vcell .vlabel{position:absolute;bottom:0;left:0;right:0;font-size:8px;font-family:var(--mono);color:#fff;background:rgba(0,0,0,0.7);padding:1px 4px;text-align:center}
 
 /* Fullscreen overlay */
@@ -296,16 +296,23 @@ async function refresh() {
     if (laps.length) drawChart('c-lap', laps, '#00ddff', {smooth: 3, target: 11.174});
     // FPS chart removed from layout
 
-    // Video grid - split frames across 9 cells, each plays its segment
+    // Video grid - preload new frames into Image cache
     if (frames.length) {
-      window._frames = frames;
+      window._frameMeta = frames;
       const grid = document.getElementById('vgrid');
       const N = 9;
-      // Build cells if needed
       if (!grid.children.length) {
         grid.innerHTML = Array.from({length: N}, (_, i) =>
-          `<div class="vcell" onclick="openFullscreen(${i})"><img id="vc-${i}" src=""><div class="vlabel" id="vl-${i}">--</div></div>`
+          `<div class="vcell" onclick="openFullscreen(${i})"><canvas id="vc-${i}" width="256" height="224"></canvas><div class="vlabel" id="vl-${i}">--</div></div>`
         ).join('');
+      }
+      // Preload any new frame URLs
+      for (const f of frames) {
+        if (!window._imgCache[f.url]) {
+          const img = new Image();
+          img.src = f.url;
+          window._imgCache[f.url] = img;
+        }
       }
     }
 
@@ -332,12 +339,13 @@ async function refresh() {
 }
 
 // Video grid state
-window._frames = [];
-window._gridIdxs = new Array(9).fill(0); // each cell's current frame index
+window._frameMeta = [];
+window._imgCache = {};
+window._gridIdxs = new Array(9).fill(0);
 
-// Animate grid - each cell plays a different segment of training at staggered offsets
+// Animate grid at 10 FPS using preloaded images + canvas
 setInterval(() => {
-  const frames = window._frames;
+  const frames = window._frameMeta;
   if (!frames.length) return;
   const N = 9;
   const segLen = Math.max(1, Math.floor(frames.length / N));
@@ -349,15 +357,21 @@ setInterval(() => {
     const fIdx = start + window._gridIdxs[i];
     const f = frames[fIdx];
     if (!f) continue;
-    const img = document.getElementById('vc-' + i);
+
+    const canvas = document.getElementById('vc-' + i);
     const lbl = document.getElementById('vl-' + i);
-    if (img) img.src = f.url;
+    const cachedImg = window._imgCache[f.url];
+
+    if (canvas && cachedImg && cachedImg.complete && cachedImg.naturalWidth) {
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(cachedImg, 0, 0, 256, 224);
+    }
     if (lbl) {
       const step = f.name.replace('.png', '').replace(/^0+/, '') || '0';
       lbl.textContent = 'step ' + step;
     }
   }
-}, 200); // 5 FPS per cell
+}, 100); // 10 FPS - smooth since images are preloaded
 
 // Fullscreen video viewer
 window._fsIdx = 0;
@@ -365,7 +379,7 @@ window._fsCellIdx = 0;
 
 function openFullscreen(cellIdx) {
   window._fsCellIdx = cellIdx || 0;
-  const frames = window._frames;
+  const frames = window._frameMeta;
   if (!frames.length) return;
   const N = 9;
   const segLen = Math.max(1, Math.floor(frames.length / N));
@@ -384,10 +398,13 @@ function fsNav(dir) {
 }
 
 function renderFullscreen() {
-  const frames = window._frames;
+  const frames = window._frameMeta;
   if (!frames.length) return;
   const f = frames[window._fsIdx];
-  document.getElementById('fs-img').src = f.url + '?t=' + Date.now();
+  const cached = window._imgCache[f.url];
+  if (cached && cached.complete) {
+    document.getElementById('fs-img').src = cached.src;
+  }
   const step = f.name.replace('.png', '').replace(/^0+/, '') || '0';
   document.getElementById('fs-step').textContent = `Step ${step} (${window._fsIdx + 1}/${frames.length})`;
 }
