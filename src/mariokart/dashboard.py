@@ -54,10 +54,28 @@ body{background:#000;color:#fff;font-family:var(--sans);overflow-x:hidden;min-he
 
 canvas{width:100%;height:100px;display:block;margin-bottom:4px}
 
-.frames{display:grid;grid-template-columns:repeat(3,1fr);gap:3px}
-.frame-cell{aspect-ratio:256/224;background:#000;border:1px solid var(--border);overflow:hidden;position:relative}
-.frame-cell img{width:100%;height:100%;object-fit:cover;image-rendering:pixelated}
-.frame-cell .step-label{position:absolute;bottom:0;right:0;font-size:9px;font-family:var(--mono);color:#fff;background:rgba(0,0,0,0.8);padding:2px 5px}
+.video-player{position:relative;width:100%;aspect-ratio:256/224;background:#000;border:1px solid var(--border);overflow:hidden;margin-bottom:8px}
+.video-player img{width:100%;height:100%;object-fit:contain;image-rendering:pixelated}
+.video-player .overlay{position:absolute;bottom:0;left:0;right:0;padding:4px 8px;background:linear-gradient(transparent,rgba(0,0,0,0.85));display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px}
+.video-player .overlay .step-info{flex:1;color:#fff;opacity:0.7}
+.video-player .overlay .speed-btn{background:none;border:1px solid rgba(255,255,255,0.2);color:#fff;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:9px;font-family:var(--mono)}
+.video-player .overlay .speed-btn.active{border-color:var(--cyan);color:var(--cyan)}
+.timeline{width:100%;height:3px;background:#111;border-radius:2px;cursor:pointer;position:relative}
+.timeline .progress{height:100%;background:var(--cyan);border-radius:2px;box-shadow:var(--glow-c);transition:width 0.1s}
+.frame-thumbs{display:grid;grid-template-columns:repeat(6,1fr);gap:2px;margin-top:6px}
+.frame-thumbs img{width:100%;aspect-ratio:256/224;object-fit:cover;image-rendering:pixelated;border:1px solid transparent;cursor:pointer;opacity:0.5;transition:opacity 0.15s}
+.frame-thumbs img.active{border-color:var(--cyan);opacity:1}
+
+/* Fullscreen overlay */
+.fullscreen-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:1000;align-items:center;justify-content:center;flex-direction:column}
+.fullscreen-overlay.show{display:flex}
+.fullscreen-overlay img{max-width:90vw;max-height:80vh;image-rendering:pixelated;border:1px solid var(--border)}
+.fullscreen-overlay .controls{display:flex;align-items:center;gap:16px;margin-top:16px}
+.fullscreen-overlay .controls button{background:none;border:1px solid rgba(255,255,255,0.3);color:#fff;padding:8px 20px;border-radius:4px;cursor:pointer;font-family:var(--mono);font-size:13px;transition:border-color 0.15s}
+.fullscreen-overlay .controls button:hover{border-color:var(--cyan);color:var(--cyan)}
+.fullscreen-overlay .step-text{color:#fff;font-family:var(--mono);font-size:13px;opacity:0.7}
+.fullscreen-overlay .close-btn{position:absolute;top:20px;right:24px;background:none;border:none;color:#fff;font-size:28px;cursor:pointer;opacity:0.5}
+.fullscreen-overlay .close-btn:hover{opacity:1}
 
 .wr-item{margin-bottom:12px}
 .wr-name{font-size:12px;font-family:var(--mono);color:#fff;margin-bottom:4px;display:flex;justify-content:space-between}
@@ -104,8 +122,18 @@ tbody tr:hover{background:var(--bg3)}
     <canvas id="c-lap"></canvas>
   </div>
   <div class="panel" style="grid-row:1/3">
-    <div class="panel-title">Frames</div>
-    <div class="frames" id="frame-grid"></div>
+    <div class="panel-title">Live View</div>
+    <div class="video-player">
+      <img id="vp-img" src="" alt="" onclick="openFullscreen()" style="cursor:pointer" title="Click for fullscreen">
+      <div class="overlay">
+        <span class="step-info" id="vp-step">--</span>
+        <button class="speed-btn" onclick="setSpeed(1)">1x</button>
+        <button class="speed-btn active" onclick="setSpeed(3)">3x</button>
+        <button class="speed-btn" onclick="setSpeed(8)">8x</button>
+      </div>
+    </div>
+    <div class="timeline" onclick="seekFrame(event)"><div class="progress" id="vp-progress"></div></div>
+    <div class="frame-thumbs" id="vp-thumbs"></div>
   </div>
   <div class="panel">
     <div class="panel-title">Loss</div>
@@ -121,6 +149,16 @@ tbody tr:hover{background:var(--bg3)}
       <thead><tr><th>Commit</th><th>Lap</th><th>WR</th><th>Status</th><th>Description</th></tr></thead>
       <tbody id="exp-body"></tbody>
     </table>
+  </div>
+</div>
+
+<div class="fullscreen-overlay" id="fs-overlay">
+  <button class="close-btn" onclick="closeFullscreen()">&times;</button>
+  <img id="fs-img" src="">
+  <div class="controls">
+    <button onclick="fsNav(-1)">&larr; Prev</button>
+    <span class="step-text" id="fs-step">--</span>
+    <button onclick="fsNav(1)">Next &rarr;</button>
   </div>
 </div>
 
@@ -275,19 +313,22 @@ async function refresh() {
     if (laps.length) drawChart('c-lap', laps, '#00ddff', {smooth: 3, target: 11.174});
     // FPS chart removed from layout
 
-    // Frame grid
-    const grid = document.getElementById('frame-grid');
-    let fhtml = '';
-    for (let i = 0; i < 9; i++) {
-      if (i < frames.length) {
-        const f = frames[i];
-        const step = f.name.replace('.png', '').replace(/^0+/, '') || '0';
-        fhtml += `<div class="frame-cell"><img src="${f.url}" loading="lazy"><div class="step-label">${step}</div></div>`;
-      } else {
-        fhtml += `<div class="frame-cell"></div>`;
+    // Video player - update frame list
+    if (frames.length && frames.length !== window._frameCount) {
+      window._frames = frames;
+      window._frameCount = frames.length;
+      // Update thumbnails
+      const thumbs = document.getElementById('vp-thumbs');
+      const shown = frames.slice(-6);
+      thumbs.innerHTML = shown.map((f, i) =>
+        `<img src="${f.url}" onclick="jumpFrame(${frames.length - 6 + i})" data-idx="${frames.length - 6 + i}">`
+      ).join('');
+      // If at end, jump to latest
+      if (window._vpIdx >= frames.length - 2 || !window._vpStarted) {
+        window._vpIdx = frames.length - 1;
+        window._vpStarted = true;
       }
     }
-    grid.innerHTML = fhtml;
 
     // WR tracker
     let whtml = '';
@@ -311,8 +352,107 @@ async function refresh() {
   }
 }
 
+// Video player state
+window._frames = [];
+window._frameCount = 0;
+window._vpIdx = 0;
+window._vpSpeed = 3; // frames per second
+window._vpStarted = false;
+
+function setSpeed(fps) {
+  window._vpSpeed = fps;
+  document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+}
+
+function jumpFrame(idx) {
+  if (window._frames.length) {
+    window._vpIdx = Math.max(0, Math.min(idx, window._frames.length - 1));
+    renderFrame();
+  }
+}
+
+function seekFrame(e) {
+  const rect = e.currentTarget.getBoundingClientRect();
+  const pct = (e.clientX - rect.left) / rect.width;
+  jumpFrame(Math.floor(pct * window._frames.length));
+}
+
+function renderFrame() {
+  const frames = window._frames;
+  if (!frames.length) return;
+  const idx = window._vpIdx;
+  const f = frames[idx];
+  const img = document.getElementById('vp-img');
+  const ts = Date.now();
+  img.src = f.url + '?t=' + ts;
+  const step = f.name.replace('.png', '').replace(/^0+/, '') || '0';
+  document.getElementById('vp-step').textContent = `Step ${step} (${idx + 1}/${frames.length})`;
+  document.getElementById('vp-progress').style.width = ((idx + 1) / frames.length * 100) + '%';
+  // Highlight active thumb
+  document.querySelectorAll('.frame-thumbs img').forEach(t => {
+    t.classList.toggle('active', parseInt(t.dataset.idx) === idx);
+  });
+}
+
+// Auto-advance video
+setInterval(() => {
+  if (window._frames.length > 1) {
+    window._vpIdx = (window._vpIdx + 1) % window._frames.length;
+    renderFrame();
+  }
+}, 1000 / 3); // base rate, adjusted by speed
+
+// Dynamic speed interval
+let _vpTimer = null;
+function startVideoLoop() {
+  if (_vpTimer) clearInterval(_vpTimer);
+  _vpTimer = setInterval(() => {
+    if (window._frames.length > 1) {
+      window._vpIdx = (window._vpIdx + 1) % window._frames.length;
+      renderFrame();
+    }
+  }, 1000 / window._vpSpeed);
+}
+startVideoLoop();
+setInterval(() => { startVideoLoop(); }, 2000); // re-check speed
+
+// Fullscreen video viewer
+function openFullscreen() {
+  document.getElementById('fs-overlay').classList.add('show');
+  renderFullscreen();
+}
+
+function closeFullscreen() {
+  document.getElementById('fs-overlay').classList.remove('show');
+}
+
+function fsNav(dir) {
+  window._vpIdx = Math.max(0, Math.min(window._vpIdx + dir, window._frames.length - 1));
+  renderFrame();
+  renderFullscreen();
+}
+
+function renderFullscreen() {
+  const frames = window._frames;
+  if (!frames.length) return;
+  const f = frames[window._vpIdx];
+  document.getElementById('fs-img').src = f.url + '?t=' + Date.now();
+  const step = f.name.replace('.png', '').replace(/^0+/, '') || '0';
+  document.getElementById('fs-step').textContent = `Step ${step} (${window._vpIdx + 1}/${frames.length})`;
+}
+
+// Keyboard navigation
+document.addEventListener('keydown', e => {
+  if (document.getElementById('fs-overlay').classList.contains('show')) {
+    if (e.key === 'Escape') closeFullscreen();
+    if (e.key === 'ArrowLeft') fsNav(-1);
+    if (e.key === 'ArrowRight') fsNav(1);
+  }
+});
+
 refresh();
-setInterval(refresh, 3000);
+setInterval(refresh, 2000);
 window.addEventListener('resize', refresh);
 </script>
 </body>
