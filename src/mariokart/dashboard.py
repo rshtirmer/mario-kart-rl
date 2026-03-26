@@ -308,11 +308,7 @@ async function refresh() {
           window._imgCache[f.url] = img;
         }
       }
-      // Update live info
-      const latest = frames[frames.length - 1];
-      const step = latest.name.replace('.png', '').replace(/^0+/, '') || '0';
-      document.getElementById('live-step').textContent = 'step ' + step;
-      document.getElementById('live-speed').textContent = frames.length + ' frames';
+      // Frames loaded for replay (no live-step element in grid mode)
     }
 
     // WR tracker
