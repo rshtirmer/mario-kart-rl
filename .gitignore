@@ -13,16 +13,25 @@ runs/
 run.log
 *.log
 
+# Checkpoints and large files
+*.pt
+*.pth
+*.onnx
+*.npz
+
 # Python
 __pycache__/
 *.pyc
 *.pyo
-.venv/
-.eggs/
 *.egg-info/
+.eggs/
+.venv/
 
 # OS
 .DS_Store
+
+# Claude
+.claude/
 
 # Backup reference
 mario-kart-desktop-backup/
@@ -31,8 +40,6 @@ mario-kart-desktop-backup/
 retro_data/SuperMarioKart-Snes/rom.sfc
 retro_data/SuperMarioKart-Snes/*.state
 
-# Checkpoints and large files
-*.pt
-*.pth
-*.onnx
-*.npz
+# Lock files (keep uv.lock)
+*.lock
+!uv.lock
