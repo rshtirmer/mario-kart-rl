@@ -134,18 +134,29 @@ class MarioKartEnv(gym.Env):
         progress = info["checkpoint"] + info["lap_number"] * lap_size
         reward = 0.0
         speed = info["speed"]
-        speed_ratio = min(1.0, max(0, speed) / TOP_SPEED)
+        speed_ratio = max(0, speed) / TOP_SPEED
 
-        # Checkpoint progress: scaled by speed (lower magnitude for stability)
+        # Checkpoint progress: scale by speed — faster = more reward
         delta = progress - self._high_water
         if delta > 0:
-            reward += delta * 5.0 * (0.5 + speed_ratio)
+            reward += delta * 10.0 * (1.0 + speed_ratio)
             self._high_water = progress
         elif delta < -100:
             self._high_water = progress
 
-        # Continuous speed bonus (primary signal for going fast)
-        reward += 0.1 * speed_ratio
+        # Speed shaping (from backup's calibrated thresholds)
+        if info.get("wrong_way", 0) == 0x10:
+            reward -= 0.5
+        elif speed > 750:
+            reward += 0.1
+        elif speed > 600:
+            reward += 0.05
+        elif speed < 200:
+            reward -= 0.1  # penalize being slow/stuck
+
+        # Wall penalty
+        if info["surface"] == SURFACE_WALL:
+            reward -= 1.0
 
         # Lap completion bonus
         new_lap = info["lap_number"]
@@ -153,35 +164,18 @@ class MarioKartEnv(gym.Env):
             reward += 50.0
         self._prev_lap = new_lap
 
-        # Surface penalties (light — let checkpoint reward dominate)
-        surface = info["surface"]
-        if surface == SURFACE_WALL:
-            reward -= 0.1
-        elif surface == SURFACE_OFFROAD:
-            reward -= 0.05
-
-        # Wrong way penalty (light — just a nudge, not a hammer)
-        if info["wrong_way"] == 0x10:
-            reward -= 0.3
-
-        # Coin collection bonus
-        coins = info.get("coins", 0)
-        if coins > self._prev_coins:
-            reward += (coins - self._prev_coins) * 1.0
-        self._prev_coins = coins
-
         return reward
 
     def _check_done(self, info):
         if not info["is_racing"]:
             return True
-        if info["lap"] >= 133:
+        # 1-lap episodes (faster learning signal than 5 laps)
+        if info["lap"] >= 129:
             return True
-        # Stuck detection: 150 consecutive steps (~10s) with no speed
-        # Relaxed to give agent time to recover from walls
-        if self._step_count > 100 and info["speed"] < 50:
+        # Stuck detection: 50 steps at speed < 100
+        if self._step_count > 50 and info["speed"] < 100:
             self._wall_steps += 1
-            if self._wall_steps > 150:
+            if self._wall_steps > 50:
                 return True
         else:
             self._wall_steps = 0
