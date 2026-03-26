@@ -68,7 +68,7 @@ Super Mario Kart (USA).sfc
 Launch the autonomous research loop with:
 
 ```bash
-/ralph-loop "Read ralph-prompt.md and follow its instructions exactly. This is iteration $(cat results.tsv 2>/dev/null | wc -l) of an autonomous RL research loop. Read program.md for the full spec. Begin." --max-iterations 200
+/ralph-loop:ralph-loop "Read ralph-prompt.md and follow its instructions exactly. This is iteration $(cat results.tsv 2>/dev/null | wc -l) of an autonomous RL research loop. Read program.md for the full spec. Begin." --max-iterations 200
 ```
 
 Then walk away. The first iteration bootstraps the entire pipeline (Phase 0). Subsequent iterations run the experiment loop (Phase 1).
