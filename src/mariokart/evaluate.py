@@ -9,7 +9,7 @@ import torch
 
 from .config import Config
 from .env import MarioKartEnv
-from .agent import MLPPolicy
+from .agent import CNNPolicy
 
 
 def get_device():
@@ -35,8 +35,8 @@ def evaluate(checkpoint_path, n_episodes=5, seed=42):
 
     env = MarioKartEnv(state=cfg.state, max_episode_steps=cfg.max_episode_steps)
 
-    agent = MLPPolicy(
-        obs_dim=env.observation_space.shape[0],
+    agent = CNNPolicy(
+        obs_shape=env.observation_space.shape,
         n_actions=env.action_space.n,
         hidden_dim=cfg.hidden_dim,
     ).to(device)

@@ -11,7 +11,7 @@ import torch
 
 from .config import Config
 from .env import MarioKartEnv
-from .agent import MLPPolicy
+from .agent import CNNPolicy
 from .telemetry import Telemetry
 
 try:
@@ -69,18 +69,18 @@ def train():
         _wandb.init(project="mario-kart-rl", config=cfg.__dict__, name=exp_id)
 
     env = MarioKartEnv(state=cfg.state, max_episode_steps=cfg.max_episode_steps)
-    obs_dim = env.observation_space.shape[0]
+    obs_shape = env.observation_space.shape
     n_actions = env.action_space.n
-    print(f"Obs dim: {obs_dim}, Actions: {n_actions}")
+    print(f"Obs shape: {obs_shape}, Actions: {n_actions}")
 
-    agent = MLPPolicy(obs_dim, n_actions, hidden_dim=cfg.hidden_dim).to(device)
+    agent = CNNPolicy(obs_shape, n_actions, hidden_dim=cfg.hidden_dim).to(device)
     n_params = sum(p.numel() for p in agent.parameters())
     print(f"Parameters: {n_params / 1e6:.2f}M")
 
     optimizer = torch.optim.Adam(agent.parameters(), lr=cfg.lr, eps=1e-5)
 
     # Rollout storage
-    obs_buf = np.zeros((cfg.n_steps, obs_dim), dtype=np.float32)
+    obs_buf = np.zeros((cfg.n_steps,) + obs_shape, dtype=np.uint8)
     act_buf = np.zeros(cfg.n_steps, dtype=np.int64)
     rew_buf = np.zeros(cfg.n_steps, dtype=np.float32)
     done_buf = np.zeros(cfg.n_steps, dtype=np.float32)

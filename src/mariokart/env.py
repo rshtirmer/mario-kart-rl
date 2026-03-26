@@ -1,25 +1,34 @@
-"""RAM-based Mario Kart environment using direct memory reads.
-Uses RetroArch snes9x core on ARM64 — reads WRAM directly for observations."""
+"""Hybrid Mario Kart environment: B/W cropped frames + RAM for rewards.
+Uses RetroArch snes9x core on ARM64."""
 
 import struct
 import numpy as np
 import gymnasium as gym
 import stable_retro
+import cv2
 from pathlib import Path
 from collections import deque
 
-# Project root is 3 levels up from this file: src/mariokart/env.py -> project root
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 INTEGRATION_DIR = str(_PROJECT_ROOT / "retro_data")
 GAME_NAME = "SuperMarioKart-Snes"
 TOP_SPEED = 783.0
 
-# WRAM addresses (offsets into 128KB SNES WRAM)
+# Crop config (from crop tool)
+CROP_TOP = 24
+CROP_BOT = 107
+CROP_LEFT = 0
+CROP_RIGHT = 256
+FRAME_W = 160  # wide to preserve 256:83 aspect ratio
+FRAME_H = 52
+FRAME_STACK = 4
+
+# WRAM addresses
 RAM = {
-    "kart_x":       (136,  "<h"),   # signed 16-bit
+    "kart_x":       (136,  "<h"),
     "kart_y":       (140,  "<h"),
     "speed":        (4330, "<h"),
-    "direction":    (149,  "B"),     # unsigned 8-bit
+    "direction":    (149,  "B"),
     "checkpoint":   (4316, "B"),
     "lap_size":     (328,  "B"),
     "lap":          (4289, "B"),
@@ -48,26 +57,24 @@ ACTIONS = [
 SURFACE_ROAD = 64
 SURFACE_WALL = 128
 SURFACE_OFFROAD = 84
-HISTORY_LEN = 4
 
 
 def read_ram(mem, name):
-    """Read a value from WRAM by name."""
     addr, fmt = RAM[name]
     size = struct.calcsize(fmt)
     return struct.unpack(fmt, mem[addr:addr + size])[0]
 
 
 class MarioKartEnv(gym.Env):
-    """Super Mario Kart env with RAM observations (32-dim vector)."""
-
-    OBS_SIZE = 12 + HISTORY_LEN * 5
+    """Mario Kart env with B/W cropped frame stack observations."""
 
     def __init__(self, state="MarioCircuit1", max_episode_steps=4500):
         super().__init__()
         self.action_space = gym.spaces.Discrete(len(ACTIONS))
         self.observation_space = gym.spaces.Box(
-            low=-2.0, high=2.0, shape=(self.OBS_SIZE,), dtype=np.float32
+            low=0, high=255,
+            shape=(FRAME_STACK, FRAME_H, FRAME_W),
+            dtype=np.uint8,
         )
         self._state = state
         self._env = None
@@ -77,8 +84,9 @@ class MarioKartEnv(gym.Env):
         self._high_water = 0
         self._wall_steps = 0
         self._total_reward = 0.0
-        self._history = deque(maxlen=HISTORY_LEN)
+        self._frames = deque(maxlen=FRAME_STACK)
         self._max_episode_steps = max_episode_steps
+        self._last_raw_frame = None
 
     def _make_env(self):
         stable_retro.data.Integrations.add_custom_path(INTEGRATION_DIR)
@@ -96,8 +104,18 @@ class MarioKartEnv(gym.Env):
                     arr[self._buttons.index(b)] = 1
             self._action_lut.append(arr)
 
+    def _preprocess_frame(self, screen):
+        """Crop, grayscale, resize to 84x84."""
+        cropped = screen[CROP_TOP:CROP_BOT, CROP_LEFT:CROP_RIGHT]
+        gray = cv2.cvtColor(cropped, cv2.COLOR_RGB2GRAY)
+        resized = cv2.resize(gray, (FRAME_W, FRAME_H), interpolation=cv2.INTER_AREA)
+        return resized
+
+    def _get_screen(self):
+        """Get current screen from emulator."""
+        return self._env.unwrapped.em.get_screen()
+
     def _read_info(self):
-        """Read all game state from WRAM."""
         mem = self._env.get_ram()
         info = {}
         for name in RAM:
@@ -106,37 +124,8 @@ class MarioKartEnv(gym.Env):
         info["is_racing"] = info["game_mode"] == 0x1C
         return info
 
-    def _get_obs(self, info):
-        """Build 32-dim observation vector."""
-        x = info["kart_x"] / 4096.0
-        y = info["kart_y"] / 4096.0
-        d = info["direction"]
-        dir_rad = d * 2 * np.pi / 256.0
-        dir_sin, dir_cos = np.sin(dir_rad), np.cos(dir_rad)
-        speed = info["speed"] / 1000.0
-
-        lap_size = max(info["lap_size"], 1)
-        checkpoint = info["checkpoint"] / lap_size
-        lap = info["lap_number"]
-        surface = info["surface"]
-        on_road = 1.0 if surface == SURFACE_ROAD else 0.0
-        on_wall = 1.0 if surface == SURFACE_WALL else 0.0
-        on_offroad = 1.0 if surface == SURFACE_OFFROAD else 0.0
-        turned = 1.0 if info["wrong_way"] == 0x10 else 0.0
-        coins = info["coins"] / 10.0
-
-        current = np.array([
-            speed, dir_sin, dir_cos, checkpoint,
-            on_road, on_wall, on_offroad, turned,
-            x, y, lap / 5.0, coins
-        ], dtype=np.float32)
-
-        self._history.append((x, y, dir_sin, dir_cos, speed))
-        hist = np.zeros(HISTORY_LEN * 5, dtype=np.float32)
-        for i, h in enumerate(self._history):
-            hist[i * 5:(i + 1) * 5] = h
-
-        return np.clip(np.concatenate([current, hist]), -2.0, 2.0)
+    def _get_obs(self):
+        return np.array(self._frames, dtype=np.uint8)
 
     def _compute_reward(self, info):
         lap_size = max(info["lap_size"], 1)
@@ -186,18 +175,22 @@ class MarioKartEnv(gym.Env):
         self._high_water = 0
         self._wall_steps = 0
         self._total_reward = 0.0
-        self._history.clear()
-        for _ in range(HISTORY_LEN):
-            self._history.append((0, 0, 0, 0, 0))
+        self._frames.clear()
 
         # Step once to get initial state
         self._env.step(np.zeros(len(self._buttons), dtype=np.int8))
         info = self._read_info()
+        screen = self._get_screen()
+        self._last_raw_frame = screen
+
+        frame = self._preprocess_frame(screen)
+        for _ in range(FRAME_STACK):
+            self._frames.append(frame)
 
         lap_size = max(info["lap_size"], 1)
         self._high_water = info["checkpoint"] + info["lap_number"] * lap_size
 
-        return self._get_obs(info), self._format_info(info)
+        return self._get_obs(), self._format_info(info)
 
     def step(self, action):
         buttons = self._action_lut[action]
@@ -214,9 +207,13 @@ class MarioKartEnv(gym.Env):
 
         self._step_count += 1
         self._total_reward += total_reward
-        truncated = self._step_count >= self._max_episode_steps
 
-        return self._get_obs(info), total_reward, terminated, truncated, self._format_info(info)
+        screen = self._get_screen()
+        self._last_raw_frame = screen
+        self._frames.append(self._preprocess_frame(screen))
+
+        truncated = self._step_count >= self._max_episode_steps
+        return self._get_obs(), total_reward, terminated, truncated, self._format_info(info)
 
     def _format_info(self, info):
         info["episode_step"] = self._step_count
@@ -225,11 +222,7 @@ class MarioKartEnv(gym.Env):
         return info
 
     def get_raw_frame(self):
-        """Return rendered frame for telemetry (works with RetroArch core)."""
-        try:
-            return self._env.unwrapped.em.get_screen()
-        except Exception:
-            return None
+        return self._last_raw_frame
 
     def close(self):
         if self._env is not None:
