@@ -125,11 +125,12 @@ def train():
             global_step += 1
             fps_counter_steps += 1
 
-            # Save frame snapshots for dashboard
+            # Save B/W cropped frame (what agent sees) for dashboard
+            # Latest frame always written for live view
+            telem.save_live_frame(obs[0])  # first channel of frame stack
+            # Periodic save for history replay
             if global_step % cfg.frame_interval == 0:
-                raw_frame = env.get_raw_frame()
-                if raw_frame is not None:
-                    telem.save_frame(global_step, raw_frame)
+                telem.save_frame(global_step, obs[0])
 
             if done:
                 total_episodes += 1

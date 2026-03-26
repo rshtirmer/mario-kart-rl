@@ -346,11 +346,11 @@ async function refresh() {
 window._frameMeta = [];
 window._imgCache = {};
 
-// Poll latest frame for live view (every 500ms = 2 FPS live update)
+// Poll live frame at ~10 FPS for smooth real-time view
 setInterval(() => {
   const img = document.getElementById('live-img');
   if (img) img.src = '/api/latest_frame?t=' + Date.now();
-}, 500);
+}, 100);
 
 // Fullscreen video viewer
 window._fsIdx = 0;
@@ -480,10 +480,14 @@ async def api_wr(request):
 
 
 async def api_latest_frame(request):
-    """Return the most recent frame PNG from any run."""
-    runs = sorted(RUNS_DIR.glob("*/frames"), key=os.path.getmtime, reverse=True)
+    """Return the live frame (overwritten every step) from the latest run."""
+    runs = sorted(RUNS_DIR.glob("*/live_frame.png"), key=os.path.getmtime, reverse=True)
     if runs:
-        frames = sorted(runs[0].glob("*.png"))
+        return web.FileResponse(runs[0], headers={"Cache-Control": "no-cache"})
+    # Fallback to latest saved frame
+    frame_dirs = sorted(RUNS_DIR.glob("*/frames"), key=os.path.getmtime, reverse=True)
+    if frame_dirs:
+        frames = sorted(frame_dirs[0].glob("*.png"))
         if frames:
             return web.FileResponse(frames[-1])
     return web.Response(status=404)

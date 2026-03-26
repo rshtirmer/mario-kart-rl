@@ -25,10 +25,20 @@ class Telemetry:
         self.metrics_file.flush()
 
     def save_frame(self, step: int, frame: np.ndarray):
-        """Save a single game frame as compressed PNG via PIL."""
+        """Save a B/W frame as PNG for history replay."""
         from PIL import Image
-        img = Image.fromarray(frame)
+        img = Image.fromarray(frame, mode="L")
         img.save(self.frames_dir / f"{step:010d}.png")
+
+    def save_live_frame(self, frame: np.ndarray):
+        """Overwrite the live frame file (dashboard polls this)."""
+        from PIL import Image
+        img = Image.fromarray(frame, mode="L")
+        # Write to temp then rename for atomic update
+        tmp = self.run_dir / "live_frame.tmp.png"
+        live = self.run_dir / "live_frame.png"
+        img.save(tmp)
+        tmp.rename(live)
 
     def close(self):
         self.metrics_file.close()
