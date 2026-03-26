@@ -21,7 +21,7 @@ class Config:
     # Training
     n_envs: int = 8
     n_steps: int = 128  # per env, total = 128*8 = 1024 per rollout
-    batch_size: int = 256
+    batch_size: int = 128
     n_epochs: int = 3
     training_minutes: int = 30
 
