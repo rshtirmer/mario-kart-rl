@@ -2,7 +2,6 @@
 
 import json
 import os
-import glob
 from pathlib import Path
 
 from aiohttp import web
@@ -11,152 +10,306 @@ RUNS_DIR = Path(__file__).parent / "runs"
 RESULTS_FILE = Path(__file__).parent / "results.tsv"
 RECORDS_FILE = Path(__file__).parent / "records.json"
 
-HTML = """<!DOCTYPE html>
-<html>
+HTML = r"""<!DOCTYPE html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Mario Kart RL Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MARIO KART RL</title>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: 'Courier New', monospace; background: #0a0a0a; color: #e0e0e0; padding: 20px; }
-h1 { color: #ff4444; margin-bottom: 10px; font-size: 24px; }
-h2 { color: #44aaff; margin: 20px 0 10px; font-size: 18px; }
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-.card { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 16px; }
-canvas { width: 100%; height: 200px; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid #222; }
-th { color: #888; }
-.keep { color: #44ff44; } .discard { color: #888; } .crash { color: #ff4444; }
-.wr-bar { background: #222; height: 20px; border-radius: 4px; overflow: hidden; margin: 4px 0; }
-.wr-fill { height: 100%; background: linear-gradient(90deg, #ff4444, #ffaa00, #44ff44); border-radius: 4px; }
-.frame-viewer { text-align: center; }
-.frame-viewer img { max-width: 100%; image-rendering: pixelated; border: 1px solid #333; }
-#status { color: #888; font-size: 12px; margin-top: 10px; }
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#000000;--bg2:#080808;--bg3:#111111;
+  --border:#1a1a1a;
+  --white:#ffffff;
+  --green:#00ff88;--red:#ff3355;--blue:#4488ff;--cyan:#00ddff;--purple:#aa77ff;
+  --glow-g:0 0 20px rgba(0,255,136,0.3);--glow-b:0 0 20px rgba(68,136,255,0.3);
+  --glow-c:0 0 20px rgba(0,221,255,0.3);
+  --mono:'SF Mono','JetBrains Mono','Fira Code',Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Inter',system-ui,sans-serif;
+}
+html{font-size:14px}
+body{background:#000;color:#fff;font-family:var(--sans);overflow-x:hidden;min-height:100vh}
+
+.header{padding:20px 28px;display:flex;align-items:center;gap:16px;border-bottom:1px solid var(--border)}
+.header h1{font-family:var(--mono);font-size:16px;font-weight:700;letter-spacing:4px;color:#fff}
+.header .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:var(--glow-g);animation:pulse 2s infinite}
+.header .status{font-size:12px;color:#fff;font-family:var(--mono);opacity:0.6}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+
+.stats{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--border);border-bottom:1px solid var(--border)}
+.stat{background:var(--bg2);padding:18px 22px}
+.stat .label{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:#fff;opacity:0.45;margin-bottom:8px;font-family:var(--mono)}
+.stat .value{font-size:24px;font-weight:700;font-family:var(--mono);color:#fff}
+.stat .value.green{color:var(--green);text-shadow:var(--glow-g)}
+.stat .value.cyan{color:var(--cyan);text-shadow:var(--glow-c)}
+.stat .value.blue{color:var(--blue);text-shadow:var(--glow-b)}
+
+.main{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border)}
+.panel{background:var(--bg2);padding:20px 24px}
+.panel-title{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:#fff;opacity:0.5;font-family:var(--mono);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.panel-title::before{content:'';width:3px;height:12px;background:var(--cyan);border-radius:1px;box-shadow:var(--glow-c)}
+
+canvas{width:100%;height:150px;display:block;margin-bottom:12px}
+
+.frames{display:grid;grid-template-columns:repeat(4,1fr);gap:3px}
+.frame-cell{aspect-ratio:256/224;background:#000;border:1px solid var(--border);overflow:hidden;position:relative}
+.frame-cell img{width:100%;height:100%;object-fit:cover;image-rendering:pixelated}
+.frame-cell .step-label{position:absolute;bottom:0;right:0;font-size:9px;font-family:var(--mono);color:#fff;background:rgba(0,0,0,0.8);padding:2px 5px}
+
+.wr-item{margin-bottom:12px}
+.wr-name{font-size:12px;font-family:var(--mono);color:#fff;margin-bottom:4px;display:flex;justify-content:space-between}
+.wr-bar{height:5px;background:#111;border-radius:3px;overflow:hidden}
+.wr-fill{height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:3px;box-shadow:var(--glow-c);transition:width 0.5s}
+
+.experiments{grid-column:1/-1;background:var(--bg2);padding:20px 24px;border-top:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:13px}
+thead th{text-align:left;padding:10px 14px;color:#fff;opacity:0.45;font-size:11px;text-transform:uppercase;letter-spacing:1.5px;border-bottom:1px solid var(--border);font-weight:500}
+tbody td{padding:8px 14px;color:#fff;border-bottom:1px solid rgba(26,26,26,0.6)}
+tbody tr:hover{background:var(--bg3)}
+.tag{display:inline-block;padding:3px 10px;border-radius:3px;font-size:11px;font-weight:600}
+.tag.keep{background:rgba(0,255,136,0.15);color:var(--green);border:1px solid rgba(0,255,136,0.25)}
+.tag.crash{background:rgba(255,51,85,0.12);color:var(--red);border:1px solid rgba(255,51,85,0.2)}
+.tag.discard{background:rgba(122,131,155,0.12);color:#fff;opacity:0.5;border:1px solid rgba(122,131,155,0.2)}
+
+@media(max-width:900px){.stats{grid-template-columns:repeat(3,1fr)}.main{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
-<h1>MARIO KART RL DASHBOARD</h1>
-<div id="status">Connecting...</div>
 
-<div class="grid">
-  <div class="card">
-    <h2>Training Curves</h2>
-    <canvas id="rewardChart"></canvas>
-    <canvas id="lossChart"></canvas>
+<div class="header">
+  <h1>MARIO KART RL</h1>
+  <div class="dot"></div>
+  <span class="status" id="status">connecting...</span>
+</div>
+
+<div class="stats">
+  <div class="stat"><div class="label">Steps</div><div class="value cyan" id="s-steps">--</div></div>
+  <div class="stat"><div class="label">Episodes</div><div class="value" id="s-episodes">--</div></div>
+  <div class="stat"><div class="label">Best Lap</div><div class="value green" id="s-bestlap">--</div></div>
+  <div class="stat"><div class="label">FPS</div><div class="value blue" id="s-fps">--</div></div>
+  <div class="stat"><div class="label">Memory</div><div class="value" id="s-mem">--</div></div>
+  <div class="stat"><div class="label">Elapsed</div><div class="value" id="s-elapsed">--</div></div>
+</div>
+
+<div class="main">
+  <div class="panel">
+    <div class="panel-title">Episode Reward</div>
+    <canvas id="c-reward"></canvas>
+    <div class="panel-title">Policy Loss</div>
+    <canvas id="c-loss"></canvas>
   </div>
-  <div class="card">
-    <h2>Lap Times</h2>
-    <canvas id="lapChart"></canvas>
-    <div id="wrTracker"></div>
+  <div class="panel">
+    <div class="panel-title">Lap Times</div>
+    <canvas id="c-lap"></canvas>
+    <div class="panel-title">Throughput</div>
+    <canvas id="c-fps"></canvas>
   </div>
-  <div class="card">
-    <h2>Latest Frame</h2>
-    <div class="frame-viewer"><img id="latestFrame" src="" alt="No frames yet"></div>
+  <div class="panel">
+    <div class="panel-title">Frame Snapshots</div>
+    <div class="frames" id="frame-grid"></div>
   </div>
-  <div class="card">
-    <h2>Experiment History</h2>
-    <div id="experiments" style="max-height:300px;overflow-y:auto;"></div>
+  <div class="panel">
+    <div class="panel-title">World Record Progress</div>
+    <div id="wr-tracker"></div>
+  </div>
+  <div class="experiments">
+    <div class="panel-title">Experiment History</div>
+    <table>
+      <thead><tr><th>Commit</th><th>Lap Time</th><th>WR</th><th>Mem</th><th>Status</th><th>Description</th></tr></thead>
+      <tbody id="exp-body"></tbody>
+    </table>
   </div>
 </div>
 
 <script>
-function drawChart(canvasId, data, label, color) {
-    const canvas = document.getElementById(canvasId);
-    const ctx = canvas.getContext('2d');
-    canvas.width = canvas.offsetWidth * 2;
-    canvas.height = 400;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+const DPR = window.devicePixelRatio || 1;
 
-    if (!data.length) return;
+function initCanvas(id) {
+  const c = document.getElementById(id);
+  const r = c.getBoundingClientRect();
+  c.width = r.width * DPR;
+  c.height = r.height * DPR;
+  return c;
+}
 
-    const padding = 40;
-    const w = canvas.width - padding * 2;
-    const h = canvas.height - padding * 2;
+function drawChart(id, data, color, opts = {}) {
+  const c = initCanvas(id);
+  const ctx = c.getContext('2d');
+  const W = c.width, H = c.height;
+  ctx.clearRect(0, 0, W, H);
+  if (!data.length) return;
 
-    const minY = Math.min(...data);
-    const maxY = Math.max(...data);
-    const rangeY = maxY - minY || 1;
+  const pad = {l: 50 * DPR, r: 10 * DPR, t: 8 * DPR, b: 20 * DPR};
+  const w = W - pad.l - pad.r, h = H - pad.t - pad.b;
 
-    // Axes
-    ctx.strokeStyle = '#333';
+  // Smooth data (moving average)
+  const smooth = opts.smooth || 5;
+  const sd = data.map((_, i) => {
+    const start = Math.max(0, i - smooth + 1);
+    const slice = data.slice(start, i + 1);
+    return slice.reduce((a, b) => a + b, 0) / slice.length;
+  });
+
+  let minY = Math.min(...sd), maxY = Math.max(...sd);
+  if (opts.minY !== undefined) minY = Math.min(minY, opts.minY);
+  const rangeY = maxY - minY || 1;
+  const toX = i => pad.l + (i / (sd.length - 1 || 1)) * w;
+  const toY = v => pad.t + h - ((v - minY) / rangeY) * h;
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = DPR;
+  for (let i = 0; i < 4; i++) {
+    const y = pad.t + (i / 3) * h;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+    const val = maxY - (i / 3) * rangeY;
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.font = `${9 * DPR}px SF Mono, monospace`;
+    ctx.textAlign = 'right';
+    ctx.fillText(val.toFixed(val > 100 ? 0 : 1), pad.l - 6 * DPR, y + 3 * DPR);
+  }
+
+  // Target line
+  if (opts.target) {
+    const ty = toY(opts.target);
+    ctx.strokeStyle = 'rgba(255,51,85,0.5)';
+    ctx.setLineDash([6 * DPR, 4 * DPR]);
+    ctx.lineWidth = DPR;
+    ctx.beginPath(); ctx.moveTo(pad.l, ty); ctx.lineTo(W - pad.r, ty); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ff3355';
+    ctx.font = `${9 * DPR}px SF Mono, monospace`;
+    ctx.textAlign = 'left';
+    ctx.fillText('WR ' + opts.target.toFixed(1), W - pad.r - 40 * DPR, ty - 4 * DPR);
+  }
+
+  // Gradient fill
+  const grad = ctx.createLinearGradient(0, pad.t, 0, H - pad.b);
+  const rgb = color === '#00ff88' ? '0,255,136' : color === '#4488ff' ? '68,136,255' : color === '#00ddff' ? '0,221,255' : '170,119,255';
+  grad.addColorStop(0, `rgba(${rgb},0.15)`);
+  grad.addColorStop(1, `rgba(${rgb},0)`);
+
+  ctx.beginPath();
+  ctx.moveTo(toX(0), H - pad.b);
+  for (let i = 0; i < sd.length; i++) ctx.lineTo(toX(i), toY(sd[i]));
+  ctx.lineTo(toX(sd.length - 1), H - pad.b);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Line with glow
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 8 * DPR;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5 * DPR;
+  ctx.beginPath();
+  for (let i = 0; i < sd.length; i++) {
+    if (i === 0) ctx.moveTo(toX(i), toY(sd[i]));
+    else ctx.lineTo(toX(i), toY(sd[i]));
+  }
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Second series
+  if (opts.data2) {
+    const sd2 = opts.data2.map((_, i) => {
+      const start = Math.max(0, i - smooth + 1);
+      const slice = opts.data2.slice(start, i + 1);
+      return slice.reduce((a, b) => a + b, 0) / slice.length;
+    });
+    ctx.shadowColor = opts.color2 || '#aa77ff';
+    ctx.shadowBlur = 6 * DPR;
+    ctx.strokeStyle = opts.color2 || '#aa77ff';
+    ctx.lineWidth = 1.5 * DPR;
     ctx.beginPath();
-    ctx.moveTo(padding, padding);
-    ctx.lineTo(padding, canvas.height - padding);
-    ctx.lineTo(canvas.width - padding, canvas.height - padding);
-    ctx.stroke();
-
-    // Labels
-    ctx.fillStyle = '#888';
-    ctx.font = '20px Courier New';
-    ctx.fillText(label, padding, padding - 10);
-    ctx.fillText(maxY.toFixed(1), 2, padding + 10);
-    ctx.fillText(minY.toFixed(1), 2, canvas.height - padding);
-
-    // Line
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (let i = 0; i < data.length; i++) {
-        const x = padding + (i / (data.length - 1 || 1)) * w;
-        const y = canvas.height - padding - ((data[i] - minY) / rangeY) * h;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+    for (let i = 0; i < sd2.length; i++) {
+      const v = pad.t + h - ((sd2[i] - minY) / rangeY) * h;
+      if (i === 0) ctx.moveTo(toX(i), v); else ctx.lineTo(toX(i), v);
     }
     ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+}
+
+function fmtTime(s) {
+  if (s < 60) return s.toFixed(0) + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60).toFixed(0) + 's';
+  return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
 }
 
 async function refresh() {
-    try {
-        // Metrics
-        const metricsRes = await fetch('/api/metrics');
-        const metrics = await metricsRes.json();
+  try {
+    const [metricsRes, expRes, wrRes, framesRes] = await Promise.all([
+      fetch('/api/metrics'), fetch('/api/experiments'), fetch('/api/wr'), fetch('/api/latest_frames')
+    ]);
+    const metrics = await metricsRes.json();
+    const exps = await expRes.json();
+    const wr = await wrRes.json();
+    const frames = await framesRes.json();
 
-        if (metrics.length) {
-            drawChart('rewardChart', metrics.map(m => m.episode_reward || 0).filter(x => x), 'Episode Reward', '#44ff44');
-            drawChart('lossChart', metrics.map(m => m.policy_loss || 0).filter(x => x), 'Policy Loss', '#ff8844');
-            const laps = metrics.map(m => m.avg_lap_time).filter(x => x && x < 900);
-            if (laps.length) drawChart('lapChart', laps, 'Avg Lap Time (s)', '#44aaff');
-        }
-
-        // Experiments
-        const expRes = await fetch('/api/experiments');
-        const exps = await expRes.json();
-        if (exps.length) {
-            let html = '<table><tr><th>Commit</th><th>Lap Time</th><th>WR</th><th>Status</th><th>Description</th></tr>';
-            for (const e of exps) {
-                html += `<tr class="${e.status}"><td>${e.commit}</td><td>${e.avg_lap_time}</td><td>${e.tracks_wr}</td><td>${e.status}</td><td>${e.description}</td></tr>`;
-            }
-            html += '</table>';
-            document.getElementById('experiments').innerHTML = html;
-        }
-
-        // WR tracker
-        const wrRes = await fetch('/api/wr');
-        const wr = await wrRes.json();
-        let wrHtml = '';
-        for (const [track, info] of Object.entries(wr)) {
-            const pct = Math.min(100, Math.max(0, info.progress_pct));
-            wrHtml += `<div><b>${track}</b>: ${info.agent_time.toFixed(1)}s / ${info.wr_time.toFixed(1)}s WR`;
-            wrHtml += `<div class="wr-bar"><div class="wr-fill" style="width:${pct}%"></div></div></div>`;
-        }
-        document.getElementById('wrTracker').innerHTML = wrHtml;
-
-        // Latest frame
-        const frameRes = await fetch('/api/latest_frame');
-        if (frameRes.ok) {
-            const blob = await frameRes.blob();
-            document.getElementById('latestFrame').src = URL.createObjectURL(blob);
-        }
-
-        document.getElementById('status').textContent = `Last update: ${new Date().toLocaleTimeString()} | ${metrics.length} data points`;
-    } catch (e) {
-        document.getElementById('status').textContent = 'Error: ' + e.message;
+    // Stats
+    if (metrics.length) {
+      const last = metrics[metrics.length - 1];
+      document.getElementById('s-steps').textContent = (last.step || 0).toLocaleString();
+      document.getElementById('s-episodes').textContent = (last.total_episodes || 0).toLocaleString();
+      document.getElementById('s-bestlap').textContent = last.best_lap_time && last.best_lap_time < 900 ? last.best_lap_time.toFixed(1) + 's' : '--';
+      document.getElementById('s-fps').textContent = (last.fps || 0).toFixed(0);
+      document.getElementById('s-mem').textContent = ((last.peak_memory_mb || 0) / 1024).toFixed(1) + ' GB';
+      document.getElementById('s-elapsed').textContent = fmtTime(last.elapsed_seconds || 0);
     }
+
+    // Charts
+    const rewards = metrics.map(m => m.episode_reward).filter(x => x !== undefined);
+    const pLoss = metrics.map(m => m.policy_loss).filter(x => x !== undefined);
+    const vLoss = metrics.map(m => m.value_loss).filter(x => x !== undefined);
+    const laps = metrics.map(m => m.avg_lap_time).filter(x => x && x < 900);
+    const fps = metrics.map(m => m.fps).filter(x => x !== undefined);
+
+    if (rewards.length) drawChart('c-reward', rewards, '#00ff88', {smooth: 8});
+    if (pLoss.length) drawChart('c-loss', pLoss, '#4488ff', {smooth: 5, data2: vLoss.length > 1 ? vLoss : null, color2: '#aa77ff'});
+    if (laps.length) drawChart('c-lap', laps, '#00ddff', {smooth: 3, target: 11.174});
+    if (fps.length) drawChart('c-fps', fps, '#00ff88', {smooth: 3});
+
+    // Frame grid
+    const grid = document.getElementById('frame-grid');
+    let fhtml = '';
+    for (let i = 0; i < 16; i++) {
+      if (i < frames.length) {
+        const f = frames[i];
+        const step = f.name.replace('.png', '').replace(/^0+/, '') || '0';
+        fhtml += `<div class="frame-cell"><img src="${f.url}" loading="lazy"><div class="step-label">${step}</div></div>`;
+      } else {
+        fhtml += `<div class="frame-cell"></div>`;
+      }
+    }
+    grid.innerHTML = fhtml;
+
+    // WR tracker
+    let whtml = '';
+    for (const [track, info] of Object.entries(wr)) {
+      const name = track.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const pct = Math.min(100, Math.max(0, info.progress_pct));
+      whtml += `<div class="wr-item"><div class="wr-name"><span>${name}</span><span>${info.agent_time < 900 ? info.agent_time.toFixed(1) : '--'}s / ${info.wr_time.toFixed(1)}s</span></div><div class="wr-bar"><div class="wr-fill" style="width:${pct}%"></div></div></div>`;
+    }
+    document.getElementById('wr-tracker').innerHTML = whtml;
+
+    // Experiments
+    let ehtml = '';
+    for (const e of exps) {
+      ehtml += `<tr><td>${e.commit}</td><td>${e.avg_lap_time}</td><td>${e.tracks_wr}</td><td>${e.memory_gb}</td><td><span class="tag ${e.status}">${e.status}</span></td><td>${e.description}</td></tr>`;
+    }
+    document.getElementById('exp-body').innerHTML = ehtml || '<tr><td colspan="6" style="color:rgba(255,255,255,0.3);text-align:center;padding:20px">No experiments yet</td></tr>';
+
+    document.getElementById('status').textContent = `${metrics.length} pts | ${new Date().toLocaleTimeString()}`;
+  } catch (e) {
+    document.getElementById('status').textContent = 'error: ' + e.message;
+  }
 }
 
 refresh();
-setInterval(refresh, 5000);
+setInterval(refresh, 3000);
+window.addEventListener('resize', refresh);
 </script>
 </body>
 </html>"""
@@ -179,7 +332,7 @@ async def api_metrics(request):
                         metrics.append(json.loads(line))
                     except json.JSONDecodeError:
                         pass
-    return web.json_response(metrics[-500:])  # last 500 data points
+    return web.json_response(metrics[-500:])
 
 
 async def api_experiments(request):
@@ -209,8 +362,6 @@ async def api_wr(request):
     if RECORDS_FILE.exists():
         with open(RECORDS_FILE) as f:
             records = json.load(f)["tracks"]
-
-        # Find best agent times from results.tsv
         best_agent_time = 999.0
         if RESULTS_FILE.exists():
             with open(RESULTS_FILE) as f:
@@ -223,19 +374,11 @@ async def api_wr(request):
                                 best_agent_time = t
                         except ValueError:
                             pass
-
         for track_name, info in records.items():
             wr = info["avg_lap_wr"]
-            # Progress: how much of the gap to WR has been closed
-            # Assume starting point is 120s (very slow), WR is target
             start = 120.0
             progress = max(0, (start - best_agent_time) / (start - wr) * 100)
-            result[track_name] = {
-                "wr_time": wr,
-                "agent_time": best_agent_time,
-                "progress_pct": progress,
-            }
-
+            result[track_name] = {"wr_time": wr, "agent_time": best_agent_time, "progress_pct": progress}
     return web.json_response(result)
 
 
@@ -249,6 +392,32 @@ async def api_latest_frame(request):
     return web.Response(status=404)
 
 
+async def api_latest_frames(request):
+    """Return list of frame URLs from the latest run (last 16 frames)."""
+    runs = sorted(RUNS_DIR.glob("*/frames"), key=os.path.getmtime, reverse=True)
+    result = []
+    if runs:
+        run_id = runs[0].parent.name
+        frames = sorted(runs[0].glob("*.png"))
+        for f in frames[-16:]:
+            result.append({"url": f"/api/frame/{run_id}/{f.name}", "name": f.name, "run_id": run_id})
+    return web.json_response(result)
+
+
+async def api_frame(request):
+    """Serve an individual frame PNG by run_id and filename."""
+    run_id = request.match_info["run_id"]
+    filename = request.match_info["filename"]
+    if "/" in run_id or "\\" in run_id or ".." in run_id:
+        return web.Response(status=400, text="Invalid run_id")
+    if "/" in filename or "\\" in filename or ".." in filename:
+        return web.Response(status=400, text="Invalid filename")
+    frame_path = RUNS_DIR / run_id / "frames" / filename
+    if frame_path.exists() and frame_path.suffix == ".png":
+        return web.FileResponse(frame_path)
+    return web.Response(status=404)
+
+
 def main():
     app = web.Application()
     app.router.add_get("/", index)
@@ -256,6 +425,8 @@ def main():
     app.router.add_get("/api/experiments", api_experiments)
     app.router.add_get("/api/wr", api_wr)
     app.router.add_get("/api/latest_frame", api_latest_frame)
+    app.router.add_get("/api/latest_frames", api_latest_frames)
+    app.router.add_get("/api/frame/{run_id}/{filename}", api_frame)
 
     print("Dashboard running at http://localhost:8080")
     web.run_app(app, host="0.0.0.0", port=8080, print=None)
