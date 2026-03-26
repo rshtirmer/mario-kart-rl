@@ -9,10 +9,15 @@ import numpy as np
 import psutil
 import torch
 
-from config import Config
-from env import MarioKartEnv
-from agent import MLPPolicy
-from telemetry import Telemetry
+from .config import Config
+from .env import MarioKartEnv
+from .agent import MLPPolicy
+from .telemetry import Telemetry
+
+try:
+    import wandb as _wandb
+except ImportError:
+    _wandb = None
 
 
 def get_device():
@@ -55,6 +60,10 @@ def train():
 
     run_dir = Path(__file__).parent / "runs" / exp_id
     telem = Telemetry(str(run_dir))
+
+    use_wandb = cfg.use_wandb and _wandb is not None
+    if use_wandb:
+        _wandb.init(project="mario-kart-rl", config=cfg.__dict__, name=exp_id)
 
     env = MarioKartEnv(state=cfg.state, max_episode_steps=cfg.max_episode_steps)
     obs_dim = env.observation_space.shape[0]
@@ -114,7 +123,7 @@ def train():
             fps_counter_steps += 1
 
             # Save frame snapshots for dashboard
-            if global_step % 1000 == 0:
+            if global_step % cfg.frame_interval == 0:
                 raw_frame = env.get_raw_frame()
                 if raw_frame is not None:
                     telem.save_frame(global_step, raw_frame)
@@ -215,6 +224,8 @@ def train():
                 metrics["avg_lap_time"] = float(np.mean(lap_times[-10:]))
                 metrics["best_lap_time"] = best_lap_time
             telem.log_step(global_step, metrics)
+            if use_wandb:
+                _wandb.log(metrics, step=global_step)
 
     # Save checkpoint
     ckpt_path = run_dir / "checkpoints" / "final.pt"
@@ -229,6 +240,8 @@ def train():
     print("Running final evaluation...")
     eval_results = evaluate_agent(env, agent, device, cfg.eval_episodes)
     telem.close()
+    if use_wandb:
+        _wandb.finish()
     env.close()
 
     elapsed_total = time.time() - start_time

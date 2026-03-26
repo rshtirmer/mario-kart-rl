@@ -33,3 +33,6 @@ class Config:
     # Telemetry
     log_interval: int = 100
     frame_interval: int = 1000
+
+    # Weights & Biases
+    use_wandb: bool = True
