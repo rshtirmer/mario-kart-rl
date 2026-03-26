@@ -2,26 +2,20 @@
   "info": {
     "kart_x":            {"address": 136,  "type": "<i2"},
     "kart_y":            {"address": 140,  "type": "<i2"},
-    "speed":             {"address": 4330, "type": "<i2"},
+    "kart_speed":        {"address": 4330, "type": "<i2"},
     "direction":         {"address": 149,  "type": "|u1"},
     "checkpoint":        {"address": 4316, "type": "|u1"},
-    "total_checkpoints": {"address": 328,  "type": "|u1"},
+    "lap_size":          {"address": 328,  "type": "|u1"},
     "lap":               {"address": 4289, "type": "|u1"},
     "coins":             {"address": 3584, "type": "|u1"},
     "surface":           {"address": 4270, "type": "|u1"},
-    "rank":              {"address": 4160, "type": "|u1"},
-    "item":              {"address": 3440, "type": "|u1"},
-    "wrong_way":         {"address": 267,  "type": "|u1"},
-    "ext_mode":          {"address": 181,  "type": "|u1"},
-    "game_mode":         {"address": 54,   "type": "|u1"},
-    "timer_ms":          {"address": 256,  "type": "<u2"},
-    "timer_sec":         {"address": 258,  "type": "<u2"},
-    "timer_min":         {"address": 260,  "type": "<u2"},
+    "is_turned_around":  {"address": 267,  "type": "|u1"},
+    "game_mode":         {"address": 181,  "type": "|u1"},
+    "frame_counter":     {"address": 56,   "type": "<i2"},
+    "kart_state":        {"address": 4112, "type": "|u1"},
     "course":            {"address": 292,  "type": "|u1"},
-    "lakitu_timer":      {"address": 7224, "type": "|u1"},
     "boost_counter":     {"address": 4298, "type": "<i2"},
-    "mushroom_active":   {"address": 4174, "type": "|u1"},
     "wall_hit":          {"address": 4178, "type": "|u1"},
-    "frame_counter":     {"address": 56,   "type": "<i2"}
+    "rank":              {"address": 4160, "type": "|u1"}
   }
 }

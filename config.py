@@ -1,35 +1,31 @@
 """Hyperparameters for Mario Kart RL training."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
 class Config:
     # Environment
-    state: str = "MarioCircuit1"
-    action_repeat: int = 4
-    frame_stack: int = 4
-    frame_size: tuple = (84, 84)
-    max_episode_steps: int = 4500  # ~5 min at 4 frame skip
+    state: str = "MarioCircuit1.TimeTrialMario"
+    max_episode_steps: int = 4500
 
     # PPO
     lr: float = 2.5e-4
-    gamma: float = 0.99
+    gamma: float = 0.995
     gae_lambda: float = 0.95
-    clip_epsilon: float = 0.1
-    entropy_coeff: float = 0.01
+    clip_epsilon: float = 0.2
+    entropy_coeff: float = 0.03
     value_coeff: float = 0.5
     max_grad_norm: float = 0.5
 
     # Training
-    n_steps: int = 128
-    batch_size: int = 128
-    n_epochs: int = 4
+    n_steps: int = 512
+    batch_size: int = 256
+    n_epochs: int = 3
     training_minutes: int = 30
 
     # Network
-    cnn_channels: list = field(default_factory=lambda: [32, 64, 64])
-    hidden_dim: int = 512
+    hidden_dim: int = 256
 
     # Evaluation
     eval_episodes: int = 5
@@ -37,4 +33,3 @@ class Config:
     # Telemetry
     log_interval: int = 100
     frame_interval: int = 1000
-    eval_interval: int = 5000

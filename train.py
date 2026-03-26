@@ -1,7 +1,6 @@
 """PPO training loop for Mario Kart RL with telemetry and evaluation."""
 
 import time
-import sys
 import json
 import subprocess
 from pathlib import Path
@@ -12,14 +11,13 @@ import torch
 
 from config import Config
 from env import MarioKartEnv
-from agent import CNNPolicy
+from agent import MLPPolicy
 from telemetry import Telemetry
 
 
 def get_device():
     if torch.backends.mps.is_available():
         try:
-            # Test MPS with a simple op
             t = torch.zeros(1, device="mps")
             _ = t + 1
             return torch.device("mps")
@@ -29,21 +27,14 @@ def get_device():
 
 
 def compute_gae(rewards, values, dones, next_value, gamma, gae_lambda):
-    """Generalized Advantage Estimation."""
     n_steps = len(rewards)
     advantages = np.zeros(n_steps, dtype=np.float32)
     last_gae = 0.0
-
     for t in reversed(range(n_steps)):
-        if t == n_steps - 1:
-            next_val = next_value
-        else:
-            next_val = values[t + 1]
-
+        next_val = next_value if t == n_steps - 1 else values[t + 1]
         next_non_terminal = 1.0 - dones[t]
         delta = rewards[t] + gamma * next_val * next_non_terminal - values[t]
         advantages[t] = last_gae = delta + gamma * gae_lambda * next_non_terminal * last_gae
-
     returns = advantages + values
     return advantages, returns
 
@@ -53,7 +44,6 @@ def train():
     device = get_device()
     print(f"Device: {device}")
 
-    # Experiment ID from git hash
     try:
         exp_id = subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -61,48 +51,30 @@ def train():
         ).decode().strip()
     except Exception:
         exp_id = f"run_{int(time.time())}"
-
     print(f"Experiment: {exp_id}")
 
-    # Telemetry
     run_dir = Path(__file__).parent / "runs" / exp_id
     telem = Telemetry(str(run_dir))
 
-    # Environment
-    env = MarioKartEnv(
-        state=cfg.state,
-        action_repeat=cfg.action_repeat,
-        frame_stack=cfg.frame_stack,
-        frame_size=cfg.frame_size,
-        max_episode_steps=cfg.max_episode_steps,
-    )
-
-    obs_shape = env.observation_space.shape
+    env = MarioKartEnv(state=cfg.state, max_episode_steps=cfg.max_episode_steps)
+    obs_dim = env.observation_space.shape[0]
     n_actions = env.action_space.n
-    print(f"Obs shape: {obs_shape}, Actions: {n_actions}")
+    print(f"Obs dim: {obs_dim}, Actions: {n_actions}")
 
-    # Agent
-    agent = CNNPolicy(
-        obs_shape=obs_shape,
-        n_actions=n_actions,
-        hidden_dim=cfg.hidden_dim,
-        cnn_channels=cfg.cnn_channels,
-    ).to(device)
-
+    agent = MLPPolicy(obs_dim, n_actions, hidden_dim=cfg.hidden_dim).to(device)
     n_params = sum(p.numel() for p in agent.parameters())
     print(f"Parameters: {n_params / 1e6:.2f}M")
 
     optimizer = torch.optim.Adam(agent.parameters(), lr=cfg.lr, eps=1e-5)
 
     # Rollout storage
-    obs_buf = np.zeros((cfg.n_steps,) + obs_shape, dtype=np.uint8)
+    obs_buf = np.zeros((cfg.n_steps, obs_dim), dtype=np.float32)
     act_buf = np.zeros(cfg.n_steps, dtype=np.int64)
     rew_buf = np.zeros(cfg.n_steps, dtype=np.float32)
     done_buf = np.zeros(cfg.n_steps, dtype=np.float32)
     logp_buf = np.zeros(cfg.n_steps, dtype=np.float32)
     val_buf = np.zeros(cfg.n_steps, dtype=np.float32)
 
-    # Training state
     global_step = 0
     total_episodes = 0
     episode_rewards = []
@@ -114,7 +86,6 @@ def train():
     fps_counter_steps = 0
 
     obs, info = env.reset()
-
     print(f"Training for {cfg.training_minutes} minutes...")
     print("---")
 
@@ -123,7 +94,6 @@ def train():
         if elapsed > cfg.training_minutes * 60:
             break
 
-        # Collect rollout
         for step in range(cfg.n_steps):
             obs_buf[step] = obs
 
@@ -150,7 +120,6 @@ def train():
                 episode_rewards.append(ep_reward)
                 episode_lengths.append(ep_length)
 
-                # Check for lap time
                 t = info.get("time_seconds", 0)
                 lap_num = info.get("lap_number", 0)
                 if lap_num > 0 and t > 0:
@@ -161,13 +130,7 @@ def train():
 
                 obs, info = env.reset()
 
-            # Telemetry: save frame periodically
-            if global_step % cfg.frame_interval == 0:
-                raw_frame = env.get_raw_frame()
-                if raw_frame is not None:
-                    telem.save_frame(global_step, raw_frame)
-
-        # Compute advantages
+        # GAE
         with torch.no_grad():
             obs_tensor = torch.from_numpy(obs).unsqueeze(0).to(device)
             _, next_value = agent(obs_tensor)
@@ -183,7 +146,6 @@ def train():
         b_logp = torch.from_numpy(logp_buf).to(device)
         b_adv = torch.from_numpy(advantages).to(device)
         b_ret = torch.from_numpy(returns).to(device)
-
         b_adv = (b_adv - b_adv.mean()) / (b_adv.std() + 1e-8)
 
         total_policy_loss = 0.0
@@ -201,18 +163,13 @@ def train():
                     b_obs[mb_idx], b_act[mb_idx]
                 )
 
-                # Policy loss (clipped)
                 ratio = torch.exp(new_logp - b_logp[mb_idx])
                 pg_loss1 = -b_adv[mb_idx] * ratio
                 pg_loss2 = -b_adv[mb_idx] * torch.clamp(
                     ratio, 1.0 - cfg.clip_epsilon, 1.0 + cfg.clip_epsilon
                 )
                 policy_loss = torch.max(pg_loss1, pg_loss2).mean()
-
-                # Value loss
                 value_loss = 0.5 * ((new_value - b_ret[mb_idx]) ** 2).mean()
-
-                # Entropy bonus
                 entropy_loss = entropy.mean()
 
                 loss = policy_loss + cfg.value_coeff * value_loss - cfg.entropy_coeff * entropy_loss
@@ -227,13 +184,12 @@ def train():
                 total_entropy += entropy_loss.item()
                 n_updates += 1
 
-        # Telemetry: log metrics
+        # Telemetry
         if global_step % cfg.log_interval < cfg.n_steps:
             now = time.time()
             fps = fps_counter_steps / max(0.001, now - fps_counter_time)
             fps_counter_time = now
             fps_counter_steps = 0
-
             process = psutil.Process()
             mem_mb = process.memory_info().rss / 1024 / 1024
 
@@ -246,17 +202,15 @@ def train():
                 "peak_memory_mb": mem_mb,
                 "elapsed_seconds": elapsed,
             }
-
             if episode_rewards:
                 metrics["episode_reward"] = float(np.mean(episode_rewards[-10:]))
                 metrics["episode_length"] = float(np.mean(episode_lengths[-10:]))
             if lap_times:
                 metrics["avg_lap_time"] = float(np.mean(lap_times[-10:]))
                 metrics["best_lap_time"] = best_lap_time
-
             telem.log_step(global_step, metrics)
 
-    # Save final checkpoint
+    # Save checkpoint
     ckpt_path = run_dir / "checkpoints" / "final.pt"
     torch.save({
         "model_state_dict": agent.state_dict(),
@@ -268,11 +222,9 @@ def train():
     # Final evaluation
     print("Running final evaluation...")
     eval_results = evaluate_agent(env, agent, device, cfg.eval_episodes)
-
     telem.close()
     env.close()
 
-    # Print output format
     elapsed_total = time.time() - start_time
     process = psutil.Process()
     peak_mem = process.memory_info().rss / 1024 / 1024
@@ -293,18 +245,15 @@ def train():
 
 
 def evaluate_agent(env, agent, device, n_episodes=5):
-    """Run evaluation episodes and return metrics."""
     agent.eval()
     lap_times_list = []
     best_lap = float("inf")
 
-    # Load world records
     wr_file = Path(__file__).parent / "records.json"
     wr_data = {}
     if wr_file.exists():
         with open(wr_file) as f:
             wr_data = json.load(f).get("tracks", {})
-
     mario_circuit_wr = wr_data.get("mario_circuit_1", {}).get("avg_lap_wr", 11.174)
 
     for ep in range(n_episodes):
@@ -326,7 +275,6 @@ def evaluate_agent(env, agent, device, n_episodes=5):
                 best_lap = avg_lap
 
     agent.train()
-
     avg_lap_time = float(np.mean(lap_times_list)) if lap_times_list else 999.0
     best_lap_time = best_lap if best_lap < float("inf") else 999.0
     tracks_wr_beaten = 1 if avg_lap_time < mario_circuit_wr else 0

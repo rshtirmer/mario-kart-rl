@@ -1,249 +1,234 @@
-"""Mario Kart environment wrapper for stable-retro with Gymnasium interface."""
+"""RAM-based Mario Kart environment using direct memory reads.
+Uses RetroArch snes9x core on ARM64 — reads WRAM directly for observations."""
 
-import os
-os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
-
-# Disable pyglet shadow window before any retro imports (headless M1 Mac)
-try:
-    import pyglet
-    pyglet.options["shadow_window"] = False
-except ImportError:
-    pass
-
-import gymnasium as gym
+import struct
 import numpy as np
-import retro
+import gymnasium as gym
+import stable_retro
 from pathlib import Path
 from collections import deque
 
 INTEGRATION_DIR = str(Path(__file__).parent.resolve() / "retro_data")
 GAME_NAME = "SuperMarioKart-Snes"
+TOP_SPEED = 783.0
 
-# SNES button order: B Y SELECT START UP DOWN LEFT RIGHT A X L R
-BUTTON_NAMES = ["B", "Y", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT", "A", "X", "L", "R"]
+# WRAM addresses (offsets into 128KB SNES WRAM)
+RAM = {
+    "kart_x":       (136,  "<h"),   # signed 16-bit
+    "kart_y":       (140,  "<h"),
+    "speed":        (4330, "<h"),
+    "direction":    (149,  "B"),     # unsigned 8-bit
+    "checkpoint":   (4316, "B"),
+    "lap_size":     (328,  "B"),
+    "lap":          (4289, "B"),
+    "coins":        (3584, "B"),
+    "surface":      (4270, "B"),
+    "wrong_way":    (267,  "B"),
+    "game_mode":    (181,  "B"),
+    "frame_ctr":    (56,   "<h"),
+    "course":       (292,  "B"),
+    "boost_ctr":    (4298, "<h"),
+    "wall_hit":     (4178, "B"),
+}
 
-# Discrete action table: each row is a 12-element button array
-# 0: accelerate, 1: accel+left, 2: accel+right, 3: accel+hop,
-# 4: accel+left+hop, 5: accel+right+hop, 6: coast (nothing)
-ACTION_TABLE = np.array([
-    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # B
-    [1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],  # B + LEFT
-    [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0],  # B + RIGHT
-    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0],  # B + L (hop)
-    [1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0],  # B + LEFT + L (drift left)
-    [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0],  # B + RIGHT + L (drift right)
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # nothing (coast)
-], dtype=np.int8)
+ACTIONS = [
+    ["B"],                  # 0: accelerate
+    ["B", "LEFT"],          # 1: accel + left
+    ["B", "RIGHT"],         # 2: accel + right
+    ["B", "L"],             # 3: hop
+    ["B", "LEFT", "L"],     # 4: drift left
+    ["B", "RIGHT", "L"],    # 5: drift right
+    ["LEFT"],               # 6: coast + left
+    ["RIGHT"],              # 7: coast + right
+    [],                     # 8: coast
+]
 
-# Surface types
 SURFACE_ROAD = 64
 SURFACE_WALL = 128
 SURFACE_OFFROAD = 84
-SURFACE_WATER = 92
-SURFACE_VOID = 32
-SURFACE_DEEP_WATER = 34
+HISTORY_LEN = 4
+
+
+def read_ram(mem, name):
+    """Read a value from WRAM by name."""
+    addr, fmt = RAM[name]
+    size = struct.calcsize(fmt)
+    return struct.unpack(fmt, mem[addr:addr + size])[0]
 
 
 class MarioKartEnv(gym.Env):
-    """Gymnasium wrapper around stable-retro Super Mario Kart."""
+    """Super Mario Kart env with RAM observations (32-dim vector)."""
 
-    metadata = {"render_modes": ["rgb_array"]}
+    OBS_SIZE = 12 + HISTORY_LEN * 5
 
-    def __init__(
-        self,
-        state="MarioCircuit1",
-        action_repeat=4,
-        frame_stack=4,
-        frame_size=(84, 84),
-        max_episode_steps=4500,
-        render_mode=None,
-    ):
+    def __init__(self, state="MarioCircuit1", max_episode_steps=4500):
         super().__init__()
-        self.action_repeat = action_repeat
-        self.frame_stack = frame_stack
-        self.frame_size = frame_size
-        self.max_episode_steps = max_episode_steps
-        self.render_mode = render_mode
-
-        # Register custom integration path
-        retro.data.Integrations.add_custom_path(INTEGRATION_DIR)
-
-        # Create retro env (rgb_array for headless rendering)
-        self._env = retro.make(
-            GAME_NAME,
-            state=state,
-            inttype=retro.data.Integrations.CUSTOM,
-            render_mode="rgb_array",
-        )
-
-        # Spaces
-        self.action_space = gym.spaces.Discrete(len(ACTION_TABLE))
+        self.action_space = gym.spaces.Discrete(len(ACTIONS))
         self.observation_space = gym.spaces.Box(
-            low=0, high=255,
-            shape=(frame_stack, frame_size[0], frame_size[1]),
-            dtype=np.uint8,
+            low=-2.0, high=2.0, shape=(self.OBS_SIZE,), dtype=np.float32
         )
-
-        # Frame buffer for stacking
-        self._frames = deque(maxlen=frame_stack)
-
-        # State tracking for reward
-        self._prev_checkpoint = 0
-        self._prev_lap = 0
-        self._prev_coins = 0
+        self._state = state
+        self._env = None
+        self._buttons = None
+        self._action_lut = None
         self._step_count = 0
+        self._high_water = 0
+        self._wall_steps = 0
         self._total_reward = 0.0
-        self._last_raw_frame = None
+        self._history = deque(maxlen=HISTORY_LEN)
+        self._max_episode_steps = max_episode_steps
 
-    def _preprocess_frame(self, obs):
-        """Convert RGB frame to grayscale and resize to frame_size."""
-        import cv2
-        # Crop bottom minimap (keep top 110 rows of ~224)
-        obs = obs[:110, :, :]
-        gray = cv2.cvtColor(obs, cv2.COLOR_RGB2GRAY)
-        resized = cv2.resize(gray, (self.frame_size[1], self.frame_size[0]),
-                             interpolation=cv2.INTER_AREA)
-        return resized
+    def _make_env(self):
+        stable_retro.data.Integrations.add_custom_path(INTEGRATION_DIR)
+        self._env = stable_retro.make(
+            game=GAME_NAME, state=self._state,
+            inttype=stable_retro.data.Integrations.CUSTOM_ONLY,
+            render_mode=None,
+        )
+        self._buttons = self._env.buttons
+        self._action_lut = []
+        for combo in ACTIONS:
+            arr = np.zeros(len(self._buttons), dtype=np.int8)
+            for b in combo:
+                if b in self._buttons:
+                    arr[self._buttons.index(b)] = 1
+            self._action_lut.append(arr)
 
-    def _get_stacked_obs(self):
-        return np.array(self._frames, dtype=np.uint8)
+    def _read_info(self):
+        """Read all game state from WRAM."""
+        mem = self._env.get_ram()
+        info = {}
+        for name in RAM:
+            info[name] = read_ram(mem, name)
+        info["lap_number"] = max(0, info["lap"] - 128)
+        info["is_racing"] = info["game_mode"] == 0x1C
+        return info
+
+    def _get_obs(self, info):
+        """Build 32-dim observation vector."""
+        x = info["kart_x"] / 4096.0
+        y = info["kart_y"] / 4096.0
+        d = info["direction"]
+        dir_rad = d * 2 * np.pi / 256.0
+        dir_sin, dir_cos = np.sin(dir_rad), np.cos(dir_rad)
+        speed = info["speed"] / 1000.0
+
+        lap_size = max(info["lap_size"], 1)
+        checkpoint = info["checkpoint"] / lap_size
+        lap = info["lap_number"]
+        surface = info["surface"]
+        on_road = 1.0 if surface == SURFACE_ROAD else 0.0
+        on_wall = 1.0 if surface == SURFACE_WALL else 0.0
+        on_offroad = 1.0 if surface == SURFACE_OFFROAD else 0.0
+        turned = 1.0 if info["wrong_way"] == 0x10 else 0.0
+        coins = info["coins"] / 10.0
+
+        current = np.array([
+            speed, dir_sin, dir_cos, checkpoint,
+            on_road, on_wall, on_offroad, turned,
+            x, y, lap / 5.0, coins
+        ], dtype=np.float32)
+
+        self._history.append((x, y, dir_sin, dir_cos, speed))
+        hist = np.zeros(HISTORY_LEN * 5, dtype=np.float32)
+        for i, h in enumerate(self._history):
+            hist[i * 5:(i + 1) * 5] = h
+
+        return np.clip(np.concatenate([current, hist]), -2.0, 2.0)
 
     def _compute_reward(self, info):
-        """Compute shaped reward from RAM values."""
+        lap_size = max(info["lap_size"], 1)
+        progress = info["checkpoint"] + info["lap_number"] * lap_size
         reward = 0.0
 
-        # Checkpoint progress (main signal)
-        lap = max(0, info.get("lap", 128) - 128)
-        total_cp = max(1, info.get("total_checkpoints", 1))
-        checkpoint = info.get("checkpoint", 0)
-        progress = checkpoint + lap * total_cp
+        delta = progress - self._high_water
+        if delta > 0:
+            reward += delta * 10.0
+            self._high_water = progress
+        elif delta < -100:
+            self._high_water = progress
 
-        delta_progress = progress - self._prev_checkpoint
-        if delta_progress < -100:
-            delta_progress = 0  # state reset
-        reward += delta_progress * 10.0
-        self._prev_checkpoint = progress
-
-        # Speed bonus (encourage going fast)
-        speed = info.get("speed", 0)
-        if speed > 800:
+        speed = info["speed"]
+        if speed > TOP_SPEED * 0.8:
+            reward += 0.2
+        elif speed > TOP_SPEED * 0.5:
             reward += 0.1
-        elif speed > 500:
-            reward += 0.05
 
-        # Surface penalty
-        surface = info.get("surface", SURFACE_ROAD)
-        if surface == SURFACE_WALL:
+        if info["surface"] == SURFACE_WALL:
             reward -= 1.0
-        elif surface in (SURFACE_VOID, SURFACE_DEEP_WATER):
-            reward -= 2.0
-        elif surface == SURFACE_OFFROAD:
-            reward -= 0.3
-
-        # Wrong way penalty
-        if info.get("wrong_way", 0) == 0x10:
-            reward -= 1.0
-
-        # Coin collection bonus
-        coins = info.get("coins", 0)
-        if coins > self._prev_coins:
-            reward += (coins - self._prev_coins) * 2.0
-        self._prev_coins = coins
-
-        # Lap completion bonus (big reward scaled inversely by time)
-        new_lap = max(0, info.get("lap", 128) - 128)
-        if new_lap > self._prev_lap and self._prev_lap > 0:
-            reward += 100.0
-        self._prev_lap = new_lap
+        if info["wrong_way"] == 0x10:
+            reward -= 0.5
 
         return reward
 
-    def _extract_info(self, retro_info):
-        """Extract structured info from retro info dict."""
-        info = dict(retro_info)
-        info["lap_number"] = max(0, info.get("lap", 128) - 128)
-        info["is_racing"] = info.get("ext_mode", 0) == 0x1C
-
-        # Compute time from frame count (60fps, each step = action_repeat frames)
-        # More reliable than BCD timer which has address issues on this ROM
-        info["time_seconds"] = self._step_count * self.action_repeat / 60.0
-
-        return info
-
-    def _retro_reset(self):
-        """Handle both old gym and new gymnasium API from retro."""
-        result = self._env.reset()
-        if isinstance(result, tuple):
-            return result[0]  # (obs, info) -> obs
-        return result
-
-    def _retro_step(self, action):
-        """Handle both 4-tuple and 5-tuple step returns."""
-        result = self._env.step(action)
-        if len(result) == 5:
-            obs, reward, term, trunc, info = result
-            return obs, reward, term or trunc, info
-        return result  # (obs, reward, done, info)
+    def _check_done(self, info):
+        if not info["is_racing"]:
+            return True
+        if info["lap"] >= 133:
+            return True
+        if self._step_count > 50 and info["speed"] < 100:
+            self._wall_steps += 1
+            if self._wall_steps > 50:
+                return True
+        else:
+            self._wall_steps = 0
+        return False
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        obs = self._retro_reset()
+        if self._env is None:
+            self._make_env()
+        self._env.reset()
 
-        self._prev_checkpoint = 0
-        self._prev_lap = 0
-        self._prev_coins = 0
         self._step_count = 0
+        self._high_water = 0
+        self._wall_steps = 0
         self._total_reward = 0.0
+        self._history.clear()
+        for _ in range(HISTORY_LEN):
+            self._history.append((0, 0, 0, 0, 0))
 
-        frame = self._preprocess_frame(obs)
-        self._last_raw_frame = obs
-        for _ in range(self.frame_stack):
-            self._frames.append(frame)
+        # Step once to get initial state
+        self._env.step(np.zeros(len(self._buttons), dtype=np.int8))
+        info = self._read_info()
 
-        # Get initial info by stepping once with no-op
-        obs2, _, _, info = self._retro_step(np.zeros(12, dtype=np.int8))
-        frame2 = self._preprocess_frame(obs2)
-        self._frames.append(frame2)
-        self._last_raw_frame = obs2
+        lap_size = max(info["lap_size"], 1)
+        self._high_water = info["checkpoint"] + info["lap_number"] * lap_size
 
-        return self._get_stacked_obs(), self._extract_info(info)
+        return self._get_obs(info), self._format_info(info)
 
     def step(self, action):
-        buttons = ACTION_TABLE[action]
-
+        buttons = self._action_lut[action]
         total_reward = 0.0
         terminated = False
-        truncated = False
-        info = {}
 
-        for _ in range(self.action_repeat):
-            obs, retro_reward, done, retro_info = self._retro_step(buttons)
-            info = self._extract_info(retro_info)
-            reward = self._compute_reward(info)
-            total_reward += reward
-
-            if done:
+        for _ in range(4):  # frame skip
+            self._env.step(buttons)
+            info = self._read_info()
+            total_reward += self._compute_reward(info)
+            if self._check_done(info):
                 terminated = True
                 break
 
         self._step_count += 1
         self._total_reward += total_reward
-        self._last_raw_frame = obs
+        truncated = self._step_count >= self._max_episode_steps
 
-        frame = self._preprocess_frame(obs)
-        self._frames.append(frame)
+        return self._get_obs(info), total_reward, terminated, truncated, self._format_info(info)
 
-        if self._step_count >= self.max_episode_steps:
-            truncated = True
-
+    def _format_info(self, info):
         info["episode_step"] = self._step_count
         info["episode_reward"] = self._total_reward
-
-        return self._get_stacked_obs(), total_reward, terminated, truncated, info
+        info["time_seconds"] = self._step_count * 4 / 60.0
+        return info
 
     def get_raw_frame(self):
-        """Return last raw RGB frame (for telemetry)."""
-        return self._last_raw_frame
+        """Return rendered frame for telemetry (works with RetroArch core)."""
+        try:
+            return self._env.unwrapped.em.get_screen()
+        except Exception:
+            return None
 
     def close(self):
-        self._env.close()
+        if self._env is not None:
+            self._env.close()

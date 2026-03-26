@@ -1,9 +1,1 @@
-{
-  "done": {
-    "script": "lua:isDone"
-  },
-  "reward": {
-    "script": "lua:getReward"
-  },
-  "scripts": ["script.lua"]
-}
+{"done": {"variables": {}}, "reward": {"variables": {}}}
