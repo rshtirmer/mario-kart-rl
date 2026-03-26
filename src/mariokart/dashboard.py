@@ -536,9 +536,142 @@ async def api_frame(request):
     return web.Response(status=404)
 
 
+CROP_HTML = r"""<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><title>Frame Crop Tool</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;color:#fff;font-family:'SF Mono',monospace;padding:24px}
+h1{font-size:16px;letter-spacing:3px;margin-bottom:16px}
+.container{display:flex;gap:24px;align-items:flex-start}
+.source{position:relative;border:1px solid #333}
+.source canvas{cursor:crosshair;image-rendering:pixelated}
+.preview{display:flex;flex-direction:column;gap:12px}
+.preview canvas{image-rendering:pixelated;border:1px solid #333}
+.info{font-size:13px;line-height:1.8}
+.coords{background:#111;border:1px solid #333;padding:10px 14px;border-radius:4px;font-size:14px;cursor:pointer;user-select:all;margin-top:8px;transition:border-color 0.2s}
+.coords:hover{border-color:#00ddff}
+.coords:active{border-color:#00ff88}
+.hint{font-size:11px;color:rgba(255,255,255,0.4);margin-top:4px}
+label{font-size:12px;display:flex;align-items:center;gap:8px;margin-top:8px}
+input[type=range]{width:120px}
+</style>
+</head><body>
+<h1>FRAME CROP TOOL</h1>
+<div class="container">
+  <div class="source">
+    <canvas id="src" width="512" height="448"></canvas>
+  </div>
+  <div class="preview">
+    <div class="info">
+      <div>Original: <b>256 x 224</b></div>
+      <div>Crop: <b id="crop-dims">--</b></div>
+      <div>Output: <b>84 x 84 grayscale</b></div>
+    </div>
+    <div>Preview (84x84 B/W):</div>
+    <canvas id="prev" width="168" height="168" style="width:168px;height:168px"></canvas>
+    <div>Copy this config:</div>
+    <div class="coords" id="coords" onclick="navigator.clipboard.writeText(this.textContent).then(()=>this.style.borderColor='#00ff88')" title="Click to copy">CROP_TOP=24, CROP_BOT=110, CROP_LEFT=0, CROP_RIGHT=256</div>
+    <div class="hint">Click to copy. Paste in chat to set crop region.</div>
+    <label>Frame: <input type="range" id="frame-slider" min="0" max="0" value="0" oninput="loadFrame(this.value)"> <span id="frame-num">0</span></label>
+  </div>
+</div>
+<script>
+let frames = [];
+let cropY1 = 24, cropY2 = 110, cropX1 = 0, cropX2 = 256;
+let dragging = false, dragStart = null;
+const srcCanvas = document.getElementById('src');
+const srcCtx = srcCanvas.getContext('2d');
+const prevCanvas = document.getElementById('prev');
+const prevCtx = prevCanvas.getContext('2d');
+let currentImg = null;
+
+async function init() {
+  const res = await fetch('/api/latest_frames');
+  frames = await res.json();
+  document.getElementById('frame-slider').max = Math.max(0, frames.length - 1);
+  if (frames.length) loadFrame(Math.floor(frames.length / 2));
+}
+
+function loadFrame(idx) {
+  if (!frames[idx]) return;
+  document.getElementById('frame-num').textContent = idx;
+  const img = new Image();
+  img.onload = () => { currentImg = img; drawSource(); updatePreview(); };
+  img.src = frames[idx].url;
+}
+
+function drawSource() {
+  if (!currentImg) return;
+  srcCtx.clearRect(0, 0, 512, 448);
+  srcCtx.drawImage(currentImg, 0, 0, 512, 448);
+  // Draw crop overlay
+  srcCtx.fillStyle = 'rgba(255,0,50,0.3)';
+  srcCtx.fillRect(0, 0, 512, cropY1 * 2);  // top
+  srcCtx.fillRect(0, cropY2 * 2, 512, 448 - cropY2 * 2);  // bottom
+  srcCtx.fillRect(0, cropY1 * 2, cropX1 * 2, (cropY2 - cropY1) * 2);  // left
+  srcCtx.fillRect(cropX2 * 2, cropY1 * 2, 512 - cropX2 * 2, (cropY2 - cropY1) * 2);  // right
+  // Crop border
+  srcCtx.strokeStyle = '#00ddff';
+  srcCtx.lineWidth = 2;
+  srcCtx.strokeRect(cropX1 * 2, cropY1 * 2, (cropX2 - cropX1) * 2, (cropY2 - cropY1) * 2);
+}
+
+function updatePreview() {
+  if (!currentImg) return;
+  const w = cropX2 - cropX1, h = cropY2 - cropY1;
+  document.getElementById('crop-dims').textContent = w + ' x ' + h;
+  // Draw cropped region to temp canvas, then grayscale to preview
+  const tmp = document.createElement('canvas');
+  tmp.width = w; tmp.height = h;
+  const tctx = tmp.getContext('2d');
+  tctx.drawImage(currentImg, cropX1, cropY1, w, h, 0, 0, w, h);
+  const imgData = tctx.getImageData(0, 0, w, h);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const gray = d[i] * 0.299 + d[i+1] * 0.587 + d[i+2] * 0.114;
+    d[i] = d[i+1] = d[i+2] = gray;
+  }
+  tctx.putImageData(imgData, 0, 0);
+  prevCtx.clearRect(0, 0, 168, 168);
+  prevCtx.imageSmoothingEnabled = false;
+  prevCtx.drawImage(tmp, 0, 0, 168, 168);
+  // Update coords text
+  document.getElementById('coords').textContent =
+    `CROP_TOP=${cropY1}, CROP_BOT=${cropY2}, CROP_LEFT=${cropX1}, CROP_RIGHT=${cropX2}`;
+}
+
+srcCanvas.addEventListener('mousedown', e => {
+  const r = srcCanvas.getBoundingClientRect();
+  dragStart = {x: Math.round((e.clientX - r.left) / 2), y: Math.round((e.clientY - r.top) / 2)};
+  dragging = true;
+});
+srcCanvas.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const r = srcCanvas.getBoundingClientRect();
+  const x = Math.round((e.clientX - r.left) / 2);
+  const y = Math.round((e.clientY - r.top) / 2);
+  cropX1 = Math.max(0, Math.min(dragStart.x, x));
+  cropY1 = Math.max(0, Math.min(dragStart.y, y));
+  cropX2 = Math.min(256, Math.max(dragStart.x, x));
+  cropY2 = Math.min(224, Math.max(dragStart.y, y));
+  drawSource(); updatePreview();
+});
+srcCanvas.addEventListener('mouseup', () => { dragging = false; });
+
+init();
+</script>
+</body></html>"""
+
+
+async def crop_tool(request):
+    return web.Response(text=CROP_HTML, content_type="text/html")
+
+
 def main():
     app = web.Application()
     app.router.add_get("/", index)
+    app.router.add_get("/crop", crop_tool)
     app.router.add_get("/api/metrics", api_metrics)
     app.router.add_get("/api/experiments", api_experiments)
     app.router.add_get("/api/wr", api_wr)
