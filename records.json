@@ -1,0 +1,46 @@
+{
+  "description": "World record times for Super Mario Kart (SNES) NTSC Time Trial",
+  "source": "https://mkwrs.com/smk/",
+  "tracks": {
+    "mario_circuit_1": {
+      "track_id": "0x07",
+      "five_lap_wr": 55.87,
+      "five_lap_holder": "Nori Ishi",
+      "best_lap_wr": 10.79,
+      "best_lap_holder": "KVD",
+      "avg_lap_wr": 11.174
+    },
+    "donut_plains_1": {
+      "track_id": "0x13",
+      "five_lap_wr": 67.54,
+      "five_lap_holder": "Firewaster",
+      "best_lap_wr": 13.16,
+      "best_lap_holder": "ScouB",
+      "avg_lap_wr": 13.508
+    },
+    "ghost_valley_1": {
+      "track_id": "0x10",
+      "five_lap_wr": 59.09,
+      "five_lap_holder": "KVD",
+      "best_lap_wr": 11.63,
+      "best_lap_holder": "KVD",
+      "avg_lap_wr": 11.818
+    },
+    "bowser_castle_1": {
+      "track_id": "0x11",
+      "five_lap_wr": 85.00,
+      "five_lap_holder": "KVD",
+      "best_lap_wr": 16.85,
+      "best_lap_holder": "KVD",
+      "avg_lap_wr": 17.000
+    },
+    "mario_circuit_2": {
+      "track_id": "0x0F",
+      "five_lap_wr": 59.92,
+      "five_lap_holder": "Sami",
+      "best_lap_wr": 11.12,
+      "best_lap_holder": "ScouB",
+      "avg_lap_wr": 11.984
+    }
+  }
+}

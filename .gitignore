@@ -1,0 +1,31 @@
+# ROM files
+*.sfc
+*.smc
+*.rom
+*.bin
+*.zip
+*.nes
+*.gba
+
+# Experiment artifacts
+results.tsv
+runs/
+run.log
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.eggs/
+*.egg-info/
+
+# OS
+.DS_Store
+
+# Checkpoints and large files
+*.pt
+*.pth
+*.onnx
+*.npz
