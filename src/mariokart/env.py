@@ -153,21 +153,21 @@ class MarioKartEnv(gym.Env):
             reward += 50.0
         self._prev_lap = new_lap
 
-        # Surface penalties
+        # Surface penalties (light — let checkpoint reward dominate)
         surface = info["surface"]
         if surface == SURFACE_WALL:
-            reward -= 0.3
+            reward -= 0.1
         elif surface == SURFACE_OFFROAD:
-            reward -= 0.2
+            reward -= 0.05
 
-        # Wrong way penalty (strong)
+        # Wrong way penalty (light — just a nudge, not a hammer)
         if info["wrong_way"] == 0x10:
-            reward -= 2.0
+            reward -= 0.3
 
-        # Coin collection bonus (coins boost top speed)
+        # Coin collection bonus
         coins = info.get("coins", 0)
         if coins > self._prev_coins:
-            reward += (coins - self._prev_coins) * 2.0
+            reward += (coins - self._prev_coins) * 1.0
         self._prev_coins = coins
 
         return reward
