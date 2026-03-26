@@ -377,6 +377,13 @@ Roughly ordered from fundamentals to exotic. Start at the top.
 - **Wrong-way detection**: RAM address 267 = 0x10 means driving backwards. Heavy penalty.
 - **Character choice**: Koopa/Toad have best handling (fastest turn response). Good for learning. Switch to Bowser/DK for top speed once agent is competent.
 
+### Decentralized & competitive (future)
+- Tournament-based model selection: multiple independently-trained models race, winners survive
+- Federated training with trustless verification: lap times are objective, deterministic, and cheap to verify
+- Human-AI competition: humans race against agents, replays become demonstration data for imitation learning
+- Model crossover: take the best checkpoint from two different training runs, combine architectures or distill
+- Ghost racing as eval: saved replays from top models become moving targets for new agents to beat
+
 ---
 
 ## Example timeline

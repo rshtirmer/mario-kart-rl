@@ -133,6 +133,44 @@ The agent explores (roughly in order):
 6. Curriculum learning (easy tracks first)
 7. Advanced RL (distributional, model-based, population-based)
 
+## Future Vision: Decentralized Training & Competition
+
+Racing games have a unique property that most ML domains don't: **objectively verifiable performance.** A lap time is a lap time. You can replay any model's run deterministically and confirm the result. This sidesteps the fundamental trust problem in decentralized/federated learning -- you don't need to trust someone's gradients or weights, you just run their model on the track.
+
+This opens up directions that are normally hard in distributed ML:
+
+**Trustless model evaluation**
+- Submit a model checkpoint, it races on a standardized track, the time is the score
+- No need to inspect weights for poison pills -- bad models simply lose
+- Deterministic SNES emulation means any claimed result is independently reproducible
+
+**Tournament-based evolution**
+- Community members train models locally with their own compute
+- Models enter tournaments -- race against each other or against ghost replays
+- Top performers get merged, crossed, or used to seed the next generation
+- Natural selection pressure without centralized coordination
+
+**Human-AI competition**
+- Humans race against AI models, generating demonstration data in the process
+- Human replays become training signal (imitation learning / DAgger)
+- Leaderboard mixing human and AI times creates a compelling feedback loop
+- Humans discover strategies that models can then learn to replicate
+
+**Federated improvement without trust**
+- Train locally, submit only the checkpoint + claimed lap time
+- Verification is cheap (run one race) vs training (run millions of frames)
+- Accept contributions from anonymous sources -- the track is the proof
+- Could extend to a model marketplace where faster models have demonstrable value
+
+**Why racing specifically works**
+- Scalar metric (time) with clear ordering -- no subjective evaluation needed
+- Deterministic environment -- same inputs always produce same outputs
+- Cheap verification -- one race vs millions of training steps
+- Natural competition framing -- people *want* to race each other
+- Known human baselines (world records) provide an absolute reference
+
+This is unexplored territory. Most decentralized ML research struggles with verification. Racing games hand you verification for free.
+
 ## Key Technical Details
 
 - **RAM addresses**: Full map of game memory for reward signals -- position, speed, checkpoints, lap times, surface type, coins, items. See CLAUDE.md.
