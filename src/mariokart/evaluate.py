@@ -7,9 +7,9 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from config import Config
-from env import MarioKartEnv
-from agent import MLPPolicy
+from .config import Config
+from .env import MarioKartEnv
+from .agent import MLPPolicy
 
 
 def get_device():
@@ -43,7 +43,7 @@ def evaluate(checkpoint_path, n_episodes=5, seed=42):
     agent.load_state_dict(ckpt["model_state_dict"])
     agent.eval()
 
-    wr_file = Path(__file__).parent / "records.json"
+    wr_file = Path(__file__).resolve().parent.parent.parent / "records.json"
     with open(wr_file) as f:
         wr_data = json.load(f)["tracks"]
     mario_circuit_wr = wr_data["mario_circuit_1"]["avg_lap_wr"]
@@ -87,8 +87,13 @@ def evaluate(checkpoint_path, n_episodes=5, seed=42):
     print(f"  mario_circuit_1: {avg_lap:.3f} (wr: {mario_circuit_wr:.3f})")
 
 
-if __name__ == "__main__":
+def evaluate_cli():
+    """Entry point for 'evaluate' console script."""
     if len(sys.argv) < 2:
-        print("Usage: uv run evaluate.py <checkpoint_path> [n_episodes]")
+        print("Usage: evaluate <checkpoint_path> [n_episodes]")
         sys.exit(1)
     evaluate(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 5)
+
+
+if __name__ == "__main__":
+    evaluate_cli()

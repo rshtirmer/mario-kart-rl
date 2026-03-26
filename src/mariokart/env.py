@@ -8,7 +8,9 @@ import stable_retro
 from pathlib import Path
 from collections import deque
 
-INTEGRATION_DIR = str(Path(__file__).parent.resolve() / "retro_data")
+# Project root is 3 levels up from this file: src/mariokart/env.py -> project root
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+INTEGRATION_DIR = str(_PROJECT_ROOT / "retro_data")
 GAME_NAME = "SuperMarioKart-Snes"
 TOP_SPEED = 783.0
 

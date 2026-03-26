@@ -14,8 +14,13 @@ dependencies = [
     "wandb",
 ]
 
-[tool.setuptools]
-py-modules = []
+[project.scripts]
+train = "mariokart.train:train"
+evaluate = "mariokart.evaluate:evaluate_cli"
+dashboard = "mariokart.dashboard:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [build-system]
 requires = ["setuptools"]

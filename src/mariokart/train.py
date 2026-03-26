@@ -49,16 +49,19 @@ def train():
     device = get_device()
     print(f"Device: {device}")
 
+    # Project root is 3 levels up from this file: src/mariokart/train.py -> project root
+    project_root = Path(__file__).resolve().parent.parent.parent
+
     try:
         exp_id = subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(Path(__file__).parent),
+            cwd=str(project_root),
         ).decode().strip()
     except Exception:
         exp_id = f"run_{int(time.time())}"
     print(f"Experiment: {exp_id}")
 
-    run_dir = Path(__file__).parent / "runs" / exp_id
+    run_dir = project_root / "runs" / exp_id
     telem = Telemetry(str(run_dir))
 
     use_wandb = cfg.use_wandb and _wandb is not None
@@ -268,7 +271,7 @@ def evaluate_agent(env, agent, device, n_episodes=5):
     lap_times_list = []
     best_lap = float("inf")
 
-    wr_file = Path(__file__).parent / "records.json"
+    wr_file = Path(__file__).resolve().parent.parent.parent / "records.json"
     wr_data = {}
     if wr_file.exists():
         with open(wr_file) as f:

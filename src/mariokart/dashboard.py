@@ -6,9 +6,11 @@ from pathlib import Path
 
 from aiohttp import web
 
-RUNS_DIR = Path(__file__).parent / "runs"
-RESULTS_FILE = Path(__file__).parent / "results.tsv"
-RECORDS_FILE = Path(__file__).parent / "records.json"
+# Project root is 3 levels up from this file: src/mariokart/dashboard.py -> project root
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+RUNS_DIR = _PROJECT_ROOT / "runs"
+RESULTS_FILE = _PROJECT_ROOT / "results.tsv"
+RECORDS_FILE = _PROJECT_ROOT / "records.json"
 
 HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -38,21 +40,21 @@ body{background:#000;color:#fff;font-family:var(--sans);overflow-x:hidden;min-he
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
 
 .stats{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--border);border-bottom:1px solid var(--border)}
-.stat{background:var(--bg2);padding:18px 22px}
-.stat .label{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:#fff;opacity:0.45;margin-bottom:8px;font-family:var(--mono)}
-.stat .value{font-size:24px;font-weight:700;font-family:var(--mono);color:#fff}
+.stat{background:var(--bg2);padding:10px 16px}
+.stat .label{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:#fff;opacity:0.45;margin-bottom:4px;font-family:var(--mono)}
+.stat .value{font-size:20px;font-weight:700;font-family:var(--mono);color:#fff}
 .stat .value.green{color:var(--green);text-shadow:var(--glow-g)}
 .stat .value.cyan{color:var(--cyan);text-shadow:var(--glow-c)}
 .stat .value.blue{color:var(--blue);text-shadow:var(--glow-b)}
 
-.main{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border)}
-.panel{background:var(--bg2);padding:20px 24px}
-.panel-title{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:#fff;opacity:0.5;font-family:var(--mono);margin-bottom:14px;display:flex;align-items:center;gap:8px}
-.panel-title::before{content:'';width:3px;height:12px;background:var(--cyan);border-radius:1px;box-shadow:var(--glow-c)}
+.main{display:grid;grid-template-columns:1fr 1fr 1fr;grid-template-rows:1fr 1fr auto;gap:1px;background:var(--border);height:calc(100vh - 85px)}
+.panel{background:var(--bg2);padding:12px 16px;overflow:hidden}
+.panel-title{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:#fff;opacity:0.5;font-family:var(--mono);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.panel-title::before{content:'';width:3px;height:10px;background:var(--cyan);border-radius:1px;box-shadow:var(--glow-c)}
 
-canvas{width:100%;height:150px;display:block;margin-bottom:12px}
+canvas{width:100%;height:100px;display:block;margin-bottom:4px}
 
-.frames{display:grid;grid-template-columns:repeat(4,1fr);gap:3px}
+.frames{display:grid;grid-template-columns:repeat(3,1fr);gap:3px}
 .frame-cell{aspect-ratio:256/224;background:#000;border:1px solid var(--border);overflow:hidden;position:relative}
 .frame-cell img{width:100%;height:100%;object-fit:cover;image-rendering:pixelated}
 .frame-cell .step-label{position:absolute;bottom:0;right:0;font-size:9px;font-family:var(--mono);color:#fff;background:rgba(0,0,0,0.8);padding:2px 5px}
@@ -94,29 +96,29 @@ tbody tr:hover{background:var(--bg3)}
 
 <div class="main">
   <div class="panel">
-    <div class="panel-title">Episode Reward</div>
+    <div class="panel-title">Reward</div>
     <canvas id="c-reward"></canvas>
-    <div class="panel-title">Policy Loss</div>
-    <canvas id="c-loss"></canvas>
   </div>
   <div class="panel">
     <div class="panel-title">Lap Times</div>
     <canvas id="c-lap"></canvas>
-    <div class="panel-title">Throughput</div>
-    <canvas id="c-fps"></canvas>
   </div>
-  <div class="panel">
-    <div class="panel-title">Frame Snapshots</div>
+  <div class="panel" style="grid-row:1/3">
+    <div class="panel-title">Frames</div>
     <div class="frames" id="frame-grid"></div>
   </div>
   <div class="panel">
-    <div class="panel-title">World Record Progress</div>
+    <div class="panel-title">Loss</div>
+    <canvas id="c-loss"></canvas>
+  </div>
+  <div class="panel">
+    <div class="panel-title">WR Progress</div>
     <div id="wr-tracker"></div>
   </div>
   <div class="experiments">
-    <div class="panel-title">Experiment History</div>
+    <div class="panel-title">Experiments</div>
     <table>
-      <thead><tr><th>Commit</th><th>Lap Time</th><th>WR</th><th>Mem</th><th>Status</th><th>Description</th></tr></thead>
+      <thead><tr><th>Commit</th><th>Lap</th><th>WR</th><th>Status</th><th>Description</th></tr></thead>
       <tbody id="exp-body"></tbody>
     </table>
   </div>
@@ -127,6 +129,7 @@ const DPR = window.devicePixelRatio || 1;
 
 function initCanvas(id) {
   const c = document.getElementById(id);
+  if (!c) return null;
   const r = c.getBoundingClientRect();
   c.width = r.width * DPR;
   c.height = r.height * DPR;
@@ -135,6 +138,7 @@ function initCanvas(id) {
 
 function drawChart(id, data, color, opts = {}) {
   const c = initCanvas(id);
+  if (!c) return;
   const ctx = c.getContext('2d');
   const W = c.width, H = c.height;
   ctx.clearRect(0, 0, W, H);
@@ -269,12 +273,12 @@ async function refresh() {
     if (rewards.length) drawChart('c-reward', rewards, '#00ff88', {smooth: 8});
     if (pLoss.length) drawChart('c-loss', pLoss, '#4488ff', {smooth: 5, data2: vLoss.length > 1 ? vLoss : null, color2: '#aa77ff'});
     if (laps.length) drawChart('c-lap', laps, '#00ddff', {smooth: 3, target: 11.174});
-    if (fps.length) drawChart('c-fps', fps, '#00ff88', {smooth: 3});
+    // FPS chart removed from layout
 
     // Frame grid
     const grid = document.getElementById('frame-grid');
     let fhtml = '';
-    for (let i = 0; i < 16; i++) {
+    for (let i = 0; i < 9; i++) {
       if (i < frames.length) {
         const f = frames[i];
         const step = f.name.replace('.png', '').replace(/^0+/, '') || '0';
@@ -297,9 +301,9 @@ async function refresh() {
     // Experiments
     let ehtml = '';
     for (const e of exps) {
-      ehtml += `<tr><td>${e.commit}</td><td>${e.avg_lap_time}</td><td>${e.tracks_wr}</td><td>${e.memory_gb}</td><td><span class="tag ${e.status}">${e.status}</span></td><td>${e.description}</td></tr>`;
+      ehtml += `<tr><td>${e.commit}</td><td>${e.avg_lap_time}</td><td>${e.tracks_wr}</td><td><span class="tag ${e.status}">${e.status}</span></td><td>${e.description}</td></tr>`;
     }
-    document.getElementById('exp-body').innerHTML = ehtml || '<tr><td colspan="6" style="color:rgba(255,255,255,0.3);text-align:center;padding:20px">No experiments yet</td></tr>';
+    document.getElementById('exp-body').innerHTML = ehtml || '<tr><td colspan="5" style="color:rgba(255,255,255,0.3);text-align:center;padding:20px">No experiments yet</td></tr>';
 
     document.getElementById('status').textContent = `${metrics.length} pts | ${new Date().toLocaleTimeString()}`;
   } catch (e) {
