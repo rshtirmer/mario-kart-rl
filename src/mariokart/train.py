@@ -205,10 +205,8 @@ def train():
             _, next_values = agent(obs_tensor)
             next_values = next_values.cpu().numpy()
 
-        # Normalize rewards before GAE
-        normed_rewards = reward_normalizer.normalize(rew_buf, done_buf)
         advantages, returns = compute_gae(
-            normed_rewards, val_buf, done_buf, next_values, cfg.gamma, cfg.gae_lambda
+            rew_buf, val_buf, done_buf, next_values, cfg.gamma, cfg.gae_lambda
         )
 
         # Flatten (n_steps, n_envs) -> (n_steps * n_envs)
