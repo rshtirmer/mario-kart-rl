@@ -20,7 +20,10 @@ class CNNPolicy(nn.Module):
         with torch.no_grad():
             cnn_out_size = int(np.prod(self.cnn(torch.zeros(1, c, h, w)).shape[1:]))
 
-        self.fc = nn.Sequential(nn.Linear(cnn_out_size, hidden_dim), nn.ReLU())
+        self.fc = nn.Sequential(
+            nn.Linear(cnn_out_size, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+        )
         self.policy_head = nn.Linear(hidden_dim, n_actions)
         self.value_head = nn.Linear(hidden_dim, 1)
         self._init_weights()
