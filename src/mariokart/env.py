@@ -229,6 +229,9 @@ class MarioKartEnv(gym.Env):
                 terminated = True
                 break
 
+        # Moderate reward scaling for more stable values
+        total_reward *= 0.5
+
         self._step_count += 1
         self._total_reward += total_reward
 
