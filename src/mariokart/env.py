@@ -71,9 +71,10 @@ class MarioKartEnv(gym.Env):
     def __init__(self, state="MarioCircuit1", max_episode_steps=4500):
         super().__init__()
         self.action_space = gym.spaces.Discrete(len(ACTIONS))
+        # 4 B/W frames + 1 speed channel = 5 channels
         self.observation_space = gym.spaces.Box(
             low=0, high=255,
-            shape=(FRAME_STACK, FRAME_H, FRAME_W),
+            shape=(FRAME_STACK + 1, FRAME_H, FRAME_W),
             dtype=np.uint8,
         )
         self._state = state
@@ -126,8 +127,13 @@ class MarioKartEnv(gym.Env):
         info["is_racing"] = info["game_mode"] == 0x1C
         return info
 
-    def _get_obs(self):
-        return np.array(self._frames, dtype=np.uint8)
+    def _get_obs(self, info=None):
+        frames = np.array(self._frames, dtype=np.uint8)  # (4, H, W)
+        # Add speed channel: speed/783 * 255, tiled across frame
+        speed = 0 if info is None else info.get("speed", 0)
+        speed_val = int(min(255, max(0, speed) / TOP_SPEED * 255))
+        speed_channel = np.full((1, FRAME_H, FRAME_W), speed_val, dtype=np.uint8)
+        return np.concatenate([frames, speed_channel], axis=0)  # (5, H, W)
 
     def _compute_reward(self, info):
         lap_size = max(info["lap_size"], 1)
@@ -208,7 +214,7 @@ class MarioKartEnv(gym.Env):
         lap_size = max(info["lap_size"], 1)
         self._high_water = info["checkpoint"] + info["lap_number"] * lap_size
 
-        return self._get_obs(), self._format_info(info)
+        return self._get_obs(info), self._format_info(info)
 
     def step(self, action):
         buttons = self._action_lut[action]
@@ -231,7 +237,7 @@ class MarioKartEnv(gym.Env):
         self._frames.append(self._preprocess_frame(screen))
 
         truncated = self._step_count >= self._max_episode_steps
-        return self._get_obs(), total_reward, terminated, truncated, self._format_info(info)
+        return self._get_obs(info), total_reward, terminated, truncated, self._format_info(info)
 
     def _format_info(self, info):
         info["episode_step"] = self._step_count
