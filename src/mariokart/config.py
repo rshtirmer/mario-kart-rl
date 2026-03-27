@@ -7,7 +7,7 @@ from dataclasses import dataclass
 class Config:
     # Environment
     state: str = "MarioCircuit1.TimeTrialMario"
-    max_episode_steps: int = 4500
+    max_episode_steps: int = 2000  # tighter deadline forces faster completion
 
     # PPO
     lr: float = 2.5e-4
@@ -29,7 +29,7 @@ class Config:
     hidden_dim: int = 256
 
     # Evaluation
-    eval_episodes: int = 5
+    eval_episodes: int = 10
 
     # Telemetry
     log_interval: int = 100
