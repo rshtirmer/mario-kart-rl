@@ -10,7 +10,6 @@ def _make_cnn(c):
         nn.Conv2d(c, 32, 8, stride=4), nn.ReLU(),
         nn.Conv2d(32, 64, 4, stride=2), nn.ReLU(),
         nn.Conv2d(64, 64, 3, stride=1), nn.ReLU(),
-        nn.Conv2d(64, 64, 3, stride=1, padding=1), nn.ReLU(),
     )
 
 
